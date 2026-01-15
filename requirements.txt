@@ -1,0 +1,13 @@
+dash==2.14.0
+dash-bootstrap-components==1.5.0
+plotly==5.18.0
+pandas==2.1.0
+numpy==1.24.0
+scipy==1.11.0
+scanpy==1.9.6
+anndata==0.10.0
+allensdk==2.16.0
+pyarrow==14.0.0
+trimesh==4.0.0
+scikit-image==0.22.0
+snakemake>=8.0.0
