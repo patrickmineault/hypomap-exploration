@@ -89,6 +89,40 @@ def detect_region_column(obs_columns: List[str]) -> Optional[str]:
     return region_cols[0] if region_cols else None
 
 
+def classify_neurons(metadata: pd.DataFrame) -> pd.Series:
+    """Classify cells as neuronal or non-neuronal.
+
+    For mouse HypoMap, neurons are identified by C7_named containing 'GABA' or 'GLU'.
+
+    Args:
+        metadata: Cell metadata DataFrame
+
+    Returns:
+        Boolean Series where True indicates neuronal cells
+    """
+    if 'C7_named' in metadata.columns:
+        is_neuron = (
+            metadata['C7_named'].str.contains('GABA', case=False, na=False) |
+            metadata['C7_named'].str.contains('GLU', case=False, na=False)
+        )
+        return is_neuron
+
+    # Fallback: check other cell type columns for neuron markers
+    for col in metadata.columns:
+        if '_named' in col:
+            is_neuron = (
+                metadata[col].str.contains('GABA', case=False, na=False) |
+                metadata[col].str.contains('GLU', case=False, na=False) |
+                metadata[col].str.contains('Glut', case=False, na=False) |
+                metadata[col].str.contains('neuron', case=False, na=False)
+            )
+            if is_neuron.any():
+                return is_neuron
+
+    # Default: unknown (all False)
+    return pd.Series(False, index=metadata.index)
+
+
 def extract_mouse_metadata(h5ad_path: Optional[Path] = None) -> pd.DataFrame:
     """Extract cell metadata from mouse h5ad file.
 
@@ -123,6 +157,11 @@ def extract_mouse_metadata(h5ad_path: Optional[Path] = None) -> pd.DataFrame:
         metadata['umap_1'] = umap_coords[:, 0]
         metadata['umap_2'] = umap_coords[:, 1]
         print("Added UMAP coordinates")
+
+    # Classify neurons vs non-neurons
+    metadata['is_neuron'] = classify_neurons(metadata)
+    n_neurons = metadata['is_neuron'].sum()
+    print(f"Classified {n_neurons} neurons ({100*n_neurons/len(metadata):.1f}%)")
 
     # Ensure output directory exists
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -171,6 +210,12 @@ def print_mouse_summary(metadata: pd.DataFrame):
         for col in cell_type_cols[:3]:
             n_types = metadata[col].nunique()
             print(f"  {col}: {n_types} unique types")
+
+    # Neuron vs non-neuron
+    if 'is_neuron' in metadata.columns:
+        is_neuron = metadata['is_neuron']
+        print(f"\nNeuronal cells: {is_neuron.sum()} ({100*is_neuron.mean():.1f}%)")
+        print(f"Non-neuronal cells: {(~is_neuron).sum()} ({100*(~is_neuron).mean():.1f}%)")
 
 
 if __name__ == "__main__":

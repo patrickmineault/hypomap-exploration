@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+import pandas as pd
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -23,6 +24,89 @@ from src.datasets import (
     detect_region_column,
 )
 
+# Path to gene descriptions
+GENE_DESCRIPTIONS_PATH = Path(__file__).parent.parent / "data" / "processed" / "mouse_common" / "gene_descriptions.csv"
+
+# Path to region descriptions
+REGION_DESCRIPTIONS_PATH = Path(__file__).parent.parent / "data" / "raw" / "mouse_common.csv"
+
+# Path to ligand-receptor data
+CLUSTER_LR_PROFILE_PATH = Path(__file__).parent.parent / "data" / "processed" / "mouse_abc" / "cluster_ligand_receptor_profile.parquet"
+LR_PAIRS_PATH = Path(__file__).parent.parent / "data" / "processed" / "mouse_common" / "ligand_receptor_mouse.csv"
+
+
+def load_gene_descriptions():
+    """Load gene descriptions lookup table."""
+    if GENE_DESCRIPTIONS_PATH.exists():
+        df = pd.read_csv(GENE_DESCRIPTIONS_PATH)
+        # Create lookup dict: gene_symbol -> {protein_name, description, ...}
+        gene_info = {}
+        for _, row in df.iterrows():
+            gene_info[row['gene_symbol']] = {
+                'protein_name': row.get('protein_name', ''),
+                'description': row.get('description', ''),
+                'go_biological_process': row.get('go_biological_process', ''),
+            }
+        print(f"Loaded {len(gene_info)} gene descriptions")
+        return gene_info
+    else:
+        print(f"Warning: Gene descriptions not found at {GENE_DESCRIPTIONS_PATH}")
+        return {}
+
+
+def load_region_descriptions():
+    """Load region descriptions lookup table."""
+    if REGION_DESCRIPTIONS_PATH.exists():
+        df = pd.read_csv(REGION_DESCRIPTIONS_PATH)
+        # Create lookup dict: acronym -> {full_name, description}
+        region_info = {}
+        for _, row in df.iterrows():
+            region_info[row['acronym']] = {
+                'full_name': row.get('full_name', ''),
+                'description': row.get('description', ''),
+            }
+        print(f"Loaded {len(region_info)} region descriptions")
+        return region_info
+    else:
+        print(f"Warning: Region descriptions not found at {REGION_DESCRIPTIONS_PATH}")
+        return {}
+
+
+def load_signaling_data():
+    """Load ligand-receptor signaling data for cluster-level expression.
+
+    Returns:
+        Tuple of (ligand_to_receptors, cluster_expression, ligand_genes, receptor_genes)
+    """
+    if not CLUSTER_LR_PROFILE_PATH.exists() or not LR_PAIRS_PATH.exists():
+        print("Warning: Signaling data not found")
+        return {}, {}, set(), set()
+
+    # Load ligand-receptor pairs
+    lr_pairs = pd.read_csv(LR_PAIRS_PATH)
+
+    # Filter to neuropeptides/hormones/amines (exclude GABA/Glu etc)
+    lr_pairs = lr_pairs[lr_pairs['ligand_type'].isin(['Neuropeptide', 'Hormone', 'Amine'])]
+
+    # Create lookup: ligand -> [receptors]
+    ligand_to_receptors = lr_pairs.groupby('gene_ligand')['gene_receptor'].apply(list).to_dict()
+
+    # Get sets of ligand and receptor genes
+    ligand_genes = set(lr_pairs['gene_ligand'].unique())
+    receptor_genes = set(lr_pairs['gene_receptor'].unique())
+
+    # Load cluster expression profiles
+    cluster_lr = pd.read_parquet(CLUSTER_LR_PROFILE_PATH)
+
+    # Create lookup: cluster -> {gene: pct_expressing}
+    cluster_expression = cluster_lr.pivot_table(
+        index='cluster', columns='gene', values='pct_expressing', aggfunc='first'
+    ).to_dict('index')
+
+    print(f"Loaded signaling data: {len(ligand_genes)} ligands, {len(receptor_genes)} receptors, {len(cluster_expression)} clusters")
+
+    return ligand_to_receptors, cluster_expression, ligand_genes, receptor_genes
+
 
 def load_all_datasets():
     """Load all available processed datasets.
@@ -30,8 +114,11 @@ def load_all_datasets():
     Returns:
         Dictionary mapping dataset name to (cells_df, config) tuple
     """
+    # Temporarily disabled datasets
+    DISABLED_DATASETS = {'human_hypomap'}
+
     datasets = {}
-    available = get_processed_datasets()
+    available = [d for d in get_processed_datasets() if d not in DISABLED_DATASETS]
 
     if not available:
         raise FileNotFoundError(
@@ -74,8 +161,23 @@ def create_app():
     if not available_datasets:
         raise ValueError("No datasets could be loaded")
 
-    # Use human as default (more spatially precise), fall back to first available
-    default_dataset = 'human' if 'human' in available_datasets else available_datasets[0]
+    # Load gene descriptions
+    gene_descriptions = load_gene_descriptions()
+
+    # Load region descriptions
+    region_descriptions = load_region_descriptions()
+
+    # Load signaling data
+    ligand_to_receptors, cluster_expression, ligand_genes, receptor_genes = load_signaling_data()
+    signaling_data = {
+        'ligand_to_receptors': ligand_to_receptors,
+        'cluster_expression': cluster_expression,
+        'ligand_genes': ligand_genes,
+        'receptor_genes': receptor_genes,
+    }
+
+    # Use mouse_abc as default for now
+    default_dataset = 'mouse_abc' if 'mouse_abc' in available_datasets else available_datasets[0]
     default_data = datasets[default_dataset]
 
     print(f"\nAvailable datasets: {available_datasets}")
@@ -97,10 +199,11 @@ def create_app():
         datasets=datasets,
         available_datasets=available_datasets,
         default_dataset=default_dataset,
+        ligand_options=sorted(ligand_to_receptors.keys()),
     )
 
     # Register callbacks
-    register_callbacks(app, datasets)
+    register_callbacks(app, datasets, gene_descriptions, region_descriptions, signaling_data)
 
     return app
 

@@ -16,24 +16,33 @@ The app is built with Dash/Plotly and allows interactive exploration of cell typ
 - `src/preprocessing/` - Data processing scripts
 - `app/` - Dash application
 
+## Environment
+
+**IMPORTANT**: All commands must be run within the uv environment using `uv run`.
+
+```bash
+# Example: run any python command
+uv run python -m app.app
+```
+
 ## Reproducibility
 
 **IMPORTANT**: All data processing must go through the Snakemake pipeline.
 
 When modifying any preprocessing code:
 1. Update the relevant rule in `Snakefile`
-2. Run `snakemake -n` to verify the DAG
-3. Run `snakemake --cores 1` to regenerate outputs
+2. Run `uv run snakemake -n` to verify the DAG
+3. Run `uv run snakemake --cores 1` to regenerate outputs
 
 ```bash
 # Check what needs to run
-snakemake -n
+uv run snakemake -n
 
 # Run full pipeline
-snakemake --cores 1
+uv run snakemake --cores 1
 
 # Run specific target
-snakemake data/processed/mouse/cells_with_coords.parquet
+uv run snakemake data/processed/mouse/cells_with_coords.parquet
 ```
 
 If you add a new preprocessing step, add a corresponding rule to the Snakefile with proper input/output declarations.
@@ -41,7 +50,7 @@ If you add a new preprocessing step, add a corresponding rule to the Snakefile w
 ## Running the App
 
 ```bash
-python -m app.app
+uv run python -m app.app
 # Opens at http://localhost:8050
 ```
 

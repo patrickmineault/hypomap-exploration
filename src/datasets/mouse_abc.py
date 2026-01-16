@@ -72,6 +72,37 @@ def get_mouse_abc_config() -> DatasetConfig:
     )
 
 
+def classify_neurons(metadata: pd.DataFrame) -> pd.Series:
+    """Classify cells as neuronal or non-neuronal.
+
+    For ABC Atlas, neurons are identified by 'class' column containing
+    neurotransmitter-related terms (Glutamatergic, GABAergic, Dopaminergic, Serotonergic).
+
+    Args:
+        metadata: Cell metadata DataFrame
+
+    Returns:
+        Boolean Series where True indicates neuronal cells
+    """
+    if 'class' in metadata.columns:
+        is_neuron = (
+            metadata['class'].str.contains('Glut', case=False, na=False) |
+            metadata['class'].str.contains('GABA', case=False, na=False) |
+            metadata['class'].str.contains('Dopa', case=False, na=False) |
+            metadata['class'].str.contains('Sero', case=False, na=False) |
+            metadata['class'].str.contains('Chol', case=False, na=False)  # Cholinergic
+        )
+        return is_neuron
+
+    # Fallback: check neurotransmitter column
+    if 'neurotransmitter' in metadata.columns:
+        is_neuron = metadata['neurotransmitter'].notna() & (metadata['neurotransmitter'] != '')
+        return is_neuron
+
+    # Default: unknown (all False)
+    return pd.Series(False, index=metadata.index)
+
+
 def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame:
     """Extract cell metadata from ABC MERFISH data, filtered to hypothalamus.
 
@@ -128,9 +159,9 @@ def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame
     # 4. Join tables
     print("Joining tables...")
     # Join parcellation_index from reconstructed coordinates
+    # Both dataframes have cell_label as index, so join on index directly
     cell = cell.join(
-        recon.set_index("cell_label")[["parcellation_index", "x_reconstructed", "y_reconstructed", "z_reconstructed"]],
-        on="cell_label",
+        recon[["parcellation_index", "x_reconstructed", "y_reconstructed", "z_reconstructed"]],
         how="inner"
     )
 
@@ -146,6 +177,11 @@ def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame
     print(f"HY cells: {len(cell)}")
 
     # 6. Rename/standardize columns for hypomap compatibility
+    # Drop original section-local coordinates (we use CCF-registered reconstructed coords)
+    cols_to_drop = [c for c in ['x', 'y', 'z'] if c in cell.columns]
+    if cols_to_drop:
+        cell = cell.drop(columns=cols_to_drop)
+
     cell = cell.rename(columns={
         'cell_label': 'cell_id',
         'x_reconstructed': 'x',
@@ -156,15 +192,20 @@ def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame
         'brain_section_label': 'sample_id',
     })
 
+    # 7. Classify neurons vs non-neurons
+    cell['is_neuron'] = classify_neurons(cell)
+    n_neurons = cell['is_neuron'].sum()
+    print(f"Classified {n_neurons} neurons ({100*n_neurons/len(cell):.1f}%)")
+
     # Ensure output directory exists
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 7. Save cell metadata
+    # 8. Save cell metadata
     metadata_path = PROCESSED_DIR / "cell_metadata.parquet"
     cell.to_parquet(metadata_path)
     print(f"Saved metadata for {len(cell)} cells to {metadata_path}")
 
-    # 8. Save gene list (from ABC gene table)
+    # 9. Save gene list (from ABC gene table)
     print("Loading gene table...")
     gene_table = cache.get_metadata_dataframe(
         directory="WMB-10X",
@@ -204,13 +245,12 @@ def print_mouse_abc_summary(metadata: pd.DataFrame):
             print(f"  {col}: {n_types} unique types")
 
     # Neuron vs non-neuron
-    if 'class' in metadata.columns:
-        is_neuron = (
-            metadata["class"].str.contains("Glut", case=False, na=False) |
-            metadata["class"].str.contains("GABA", case=False, na=False) |
-            metadata["class"].str.contains("Dopa", case=False, na=False) |
-            metadata["class"].str.contains("Sero", case=False, na=False)
-        )
+    if 'is_neuron' in metadata.columns:
+        is_neuron = metadata['is_neuron']
+        print(f"\nNeuronal cells: {is_neuron.sum()} ({100*is_neuron.mean():.1f}%)")
+        print(f"Non-neuronal cells: {(~is_neuron).sum()} ({100*(~is_neuron).mean():.1f}%)")
+    elif 'class' in metadata.columns:
+        is_neuron = classify_neurons(metadata)
         print(f"\nNeuronal cells: {is_neuron.sum()} ({100*is_neuron.mean():.1f}%)")
         print(f"Non-neuronal cells: {(~is_neuron).sum()} ({100*(~is_neuron).mean():.1f}%)")
 

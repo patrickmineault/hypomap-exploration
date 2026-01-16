@@ -16,12 +16,8 @@ This application visualizes spatial transcriptomics data from:
 git clone <repository-url>
 cd hypomap
 
-# Create a virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies with uv
+uv sync
 ```
 
 ## Data Setup
@@ -66,7 +62,7 @@ This creates processed files in `data/processed/`:
 ## Running the App
 
 ```bash
-python -m app.app
+uv run python -m app.app
 ```
 
 The app will start at **http://localhost:8050**
