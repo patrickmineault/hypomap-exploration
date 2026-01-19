@@ -17,6 +17,7 @@ dependencies = [
     "trimesh>=4.0.0",
     "scikit-image>=0.22.0",
     "abc-atlas-access @ git+https://github.com/AllenInstitute/abc_atlas_access.git",
+    "marimo>=0.19.4",
 ]
 
 [project.optional-dependencies]

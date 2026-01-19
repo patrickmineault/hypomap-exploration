@@ -95,8 +95,20 @@ rule downsample_mouse_abc:
     shell:
         "python -m src.preprocessing.downsample --dataset mouse_abc"
 
+rule download_neuronchat_db:
+    """Download NeuronChat mouse interaction database."""
+    output:
+        "data/raw/mouse_common/interactionDB_mouse.txt"
+    shell:
+        """
+        mkdir -p data/raw/mouse_common
+        curl -L -o {output} https://raw.githubusercontent.com/Wei-BioMath/NeuronChatAnalysis2022/main/NeuronChatDB_table/interactionDB_mouse.txt
+        """
+
 rule build_ligand_receptor_list:
-    """Download NeuronChat database and add manual neuropeptide entries."""
+    """Process NeuronChat database and add manual neuropeptide entries."""
+    input:
+        "data/raw/mouse_common/interactionDB_mouse.txt"
     output:
         "data/processed/mouse_common/ligand_receptor_mouse.csv"
     shell:

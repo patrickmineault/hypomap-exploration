@@ -1,6 +1,9 @@
 # Data directories (large files)
-data/
+data/raw
+data/processed
 sidequests/
+notebooks/__marimo__
+__marimo__
 
 # Python
 __pycache__/
