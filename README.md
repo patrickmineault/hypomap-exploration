@@ -33,9 +33,11 @@ Download the following files to `data/raw/`:
 
 **Mouse Hypothalamus** (`data/raw/mouse_hypomap/`):
 - `d3be7423-d664-4913-89a9-a506cae4c28f.h5ad` - Mouse HypoMap from CZ CELLxGENE
-- `ligand_receptor_mouse.csv` - derived from: https://github.com/Wei-BioMath/NeuronChatAnalysis2022
 - `hypothalamus_connectivity.csv` - Intra-hypothalamic connectivity from Allen Mouse Brain Connectivity Atlas ([Oh et al. 2014](https://www.nature.com/articles/nature13186))
 - `hypothalamus_structures.csv` - Allen CCF structure IDs for hypothalamic regions
+
+**Curated Data** (`data/generated/mouse_common/`):
+- `np_map.csv` - Curated neuropeptide ligand-receptor pairs with hypothalamic nuclei annotations
 
 ### Preprocessing
 

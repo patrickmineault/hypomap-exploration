@@ -1,8 +1,10 @@
-"""Main Dash application for HypoMap 3D Viewer."""
+"""Main Dash application for HypoMap Coronal Atlas Viewer."""
 
 import sys
 from pathlib import Path
 import pandas as pd
+import numpy as np
+import json
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -13,197 +15,333 @@ import dash_bootstrap_components as dbc
 from app.layouts import create_layout
 from app.callbacks import register_callbacks
 
-# Import datasets module
-from src.datasets import (
-    get_processed_datasets,
-    load_dataset,
-    get_marker_genes,
-    get_key_receptors,
-    get_region_colors,
-    detect_cell_type_levels,
-    detect_region_column,
-)
+# Data paths
+DATA_DIR = Path(__file__).parent.parent / "data"
+CELLS_PATH = DATA_DIR / "processed" / "mouse_abc" / "cells_with_coords.parquet"
+CORONAL_REGIONS_PATH = DATA_DIR / "processed" / "mouse_abc" / "coronal_atlas_regions.json"
+CLUSTER_ANNOTATIONS_PATH = DATA_DIR / "raw" / "mouse_abc" / "abc_cluster_annotations.csv" / "cluster_annotation-Table 1.csv"
+NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
+NP_BLACKLIST_PATH = DATA_DIR / "generated" / "mouse_common" / "np_system_blacklist.csv"
+CLUSTER_LR_PROFILE_PATH = DATA_DIR / "processed" / "mouse_abc" / "cluster_ligand_receptor_profile.parquet"
+CLUSTER_NP_EXPR_PATH = DATA_DIR / "processed" / "mouse_abc" / "cluster_np_expression.parquet"
+REGION_DESCRIPTIONS_PATH = DATA_DIR / "raw" / "mouse_common.csv"
 
-# Path to gene descriptions
-GENE_DESCRIPTIONS_PATH = Path(__file__).parent.parent / "data" / "processed" / "mouse_common" / "gene_descriptions.csv"
+# Region colors for hypothalamic regions
+REGION_COLORS = {
+    'ARH': '#DC143C',  # Crimson
+    'VMH': '#0066CC',  # Strong blue
+    'PVH': '#228B22',  # Forest green
+    'DMH': '#8B008B',  # Dark magenta
+    'LHA': '#FF6600',  # Vivid orange
+    'SCH': '#FFD700',  # Gold
+    'MPO': '#8B4513',  # Saddle brown
+    'LPO': '#FF1493',  # Deep pink
+    'TU': '#696969',   # Dim gray
+    'ZI': '#008B8B',   # Dark cyan
+    'AHN': '#FF4500',  # Orange red
+    'PH': '#4169E1',   # Royal blue
+    'SO': '#C71585',   # Medium violet red
+    'PVZ': '#32CD32',  # Lime green
+    'PVpo': '#00CC66', # Spring green
+    'PVi': '#66CDAA',  # Medium aquamarine
+    'MBO': '#DAA520',  # Goldenrod
+    'AVPV': '#9932CC', # Dark orchid
+    'MM': '#B8860B',   # Dark goldenrod
+    'MPN': '#DB7093',  # Pale violet red
+    'SFO': '#20B2AA',  # Light sea green
+    'MEPO': '#778899', # Light slate gray
+    'STN': '#6B8E23',  # Olive drab
+    'PS': '#BC8F8F',   # Rosy brown
+    'PMd': '#CD5C5C',  # Indian red
+    'PMv': '#F08080',  # Light coral
+    'LM': '#DEB887',   # Burlywood
+    'SUMl': '#D2691E', # Chocolate
+    'SUMm': '#A0522D', # Sienna
+    'TMd': '#8FBC8F',  # Dark sea green
+    'TMv': '#3CB371',  # Medium sea green
+    'VLPO': '#BA55D3', # Medium orchid
+}
 
-# Path to region descriptions
-REGION_DESCRIPTIONS_PATH = Path(__file__).parent.parent / "data" / "raw" / "mouse_common.csv"
 
-# Path to ligand-receptor data
-CLUSTER_LR_PROFILE_PATH = Path(__file__).parent.parent / "data" / "processed" / "mouse_abc" / "cluster_ligand_receptor_profile.parquet"
-LR_PAIRS_PATH = Path(__file__).parent.parent / "data" / "processed" / "mouse_common" / "ligand_receptor_mouse.csv"
+def load_cell_data():
+    """Load cell data with coordinates and precomputed region assignments."""
+    if not CELLS_PATH.exists():
+        raise FileNotFoundError(f"Cell data not found at {CELLS_PATH}")
+    if not CORONAL_REGIONS_PATH.exists():
+        raise FileNotFoundError(
+            f"Coronal regions not found at {CORONAL_REGIONS_PATH}\n"
+            "Run: uv run python -m src.preprocessing.build_lateralized_regions"
+        )
+
+    df = pd.read_parquet(CELLS_PATH)
+    print(f"Loaded {len(df):,} cells with coordinates")
+
+    # Filter out HY-unassigned region
+    df = df[df['region'] != 'HY-unassigned'].copy()
+    print(f"After removing HY-unassigned: {len(df):,} cells")
+
+    # Load precomputed region data
+    with open(CORONAL_REGIONS_PATH, 'r') as f:
+        region_data = json.load(f)
+
+    slices = region_data['slices']
+    print(f"Found {len(slices)} discrete Z slices")
+
+    # Add z_slice and region_display from precomputed data
+    df['z_slice'] = df['z'].round(1)
+    df['region_display'] = df['cell_id'].map(region_data['cell_regions']).fillna(df['region'])
+
+    # Convert boundaries/centroids keys back to float
+    boundaries = {float(k): v for k, v in region_data['boundaries'].items()}
+    centroids = {float(k): {r: tuple(c) for r, c in regions.items()}
+                 for k, regions in region_data['centroids'].items()}
+
+    return df, slices, boundaries, centroids
 
 
-def load_gene_descriptions():
-    """Load gene descriptions lookup table."""
-    if GENE_DESCRIPTIONS_PATH.exists():
-        df = pd.read_csv(GENE_DESCRIPTIONS_PATH)
-        # Create lookup dict: gene_symbol -> {protein_name, description, ...}
-        gene_info = {}
-        for _, row in df.iterrows():
-            gene_info[row['gene_symbol']] = {
-                'protein_name': row.get('protein_name', ''),
-                'description': row.get('description', ''),
-                'go_biological_process': row.get('go_biological_process', ''),
-            }
-        print(f"Loaded {len(gene_info)} gene descriptions")
-        return gene_info
-    else:
-        print(f"Warning: Gene descriptions not found at {GENE_DESCRIPTIONS_PATH}")
+def load_cluster_nt_mapping():
+    """Load cluster to neurotransmitter type mapping."""
+    if not CLUSTER_ANNOTATIONS_PATH.exists():
+        print(f"Warning: Cluster annotations not found at {CLUSTER_ANNOTATIONS_PATH}")
         return {}
+
+    df = pd.read_csv(CLUSTER_ANNOTATIONS_PATH)
+
+    # Create mapping from cluster_id_label to nt_type_label
+    # The cluster_id_label format matches what's in our cell data
+    nt_mapping = {}
+    for _, row in df.iterrows():
+        cluster_label = row.get('cluster_id_label', '')
+        nt_type = row.get('nt_type_label', 'NA')
+        if cluster_label and pd.notna(nt_type):
+            nt_mapping[cluster_label] = nt_type
+
+    print(f"Loaded NT mapping for {len(nt_mapping)} clusters")
+    nt_types = sorted(set(nt_mapping.values()))
+    print(f"NT types: {nt_types}")
+
+    return nt_mapping, nt_types
+
+
+def load_np_systems():
+    """Load neuropeptide system definitions."""
+    if not NP_MAP_PATH.exists():
+        print(f"Warning: NP map not found at {NP_MAP_PATH}")
+        return {}, [], {}
+
+    df = pd.read_csv(NP_MAP_PATH)
+
+    # Load blacklist of systems to exclude (both ligand AND receptor dead)
+    blacklisted = set()
+    if NP_BLACKLIST_PATH.exists():
+        blacklist_df = pd.read_csv(NP_BLACKLIST_PATH)
+        blacklisted = set(blacklist_df['system'].tolist())
+        print(f"Loaded blacklist: {len(blacklisted)} systems excluded")
+
+    # Group by system to get ligand and receptor genes
+    # Receptor genes can be semicolon-separated for heterodimers (AND logic)
+    # e.g., "Calcrl;Ramp2" means both must be expressed
+    systems = {}
+    for system in df['System'].unique():
+        # Skip blacklisted systems
+        if system in blacklisted:
+            continue
+
+        system_df = df[df['System'] == system]
+
+        # Ligands: simple set of individual genes
+        ligand_genes = set()
+        for lg in system_df['Ligand_Gene'].dropna().unique():
+            for g in lg.split(';'):
+                ligand_genes.add(g.strip())
+
+        # Receptors: list of tuples for AND logic
+        # Each tuple contains genes that must ALL be expressed
+        receptor_complexes = []
+        for rg in system_df['Receptor_Gene'].dropna().unique():
+            genes = tuple(g.strip() for g in rg.split(';'))
+            if genes not in receptor_complexes:
+                receptor_complexes.append(genes)
+
+        systems[system] = {
+            'ligands': ligand_genes,
+            'receptors': receptor_complexes,  # List of tuples for AND logic
+        }
+
+    system_names = sorted(systems.keys())
+    print(f"Loaded {len(systems)} neuropeptide systems (after blacklist)")
+
+    # Build gene-to-system info mapping for tooltips
+    gene_info = {}
+    for system in df['System'].unique():
+        # Skip blacklisted systems
+        if system in blacklisted:
+            continue
+
+        system_df = df[df['System'] == system]
+        ligand_genes = list(system_df['Ligand_Gene'].dropna().unique())
+        receptor_genes = list(system_df['Receptor_Gene'].dropna().unique())
+        functional_role = system_df['Functional_Role'].dropna().iloc[0] if len(system_df['Functional_Role'].dropna()) > 0 else ''
+
+        # Map each ligand gene to system info
+        for gene in ligand_genes:
+            if gene not in gene_info:
+                gene_info[gene] = []
+            gene_info[gene].append({
+                'system': system,
+                'role': 'ligand',
+                'ligand_genes': ligand_genes,
+                'receptor_genes': receptor_genes,
+                'functional_role': functional_role,
+            })
+
+        # Map each receptor gene to system info
+        for gene in receptor_genes:
+            if gene not in gene_info:
+                gene_info[gene] = []
+            gene_info[gene].append({
+                'system': system,
+                'role': 'receptor',
+                'ligand_genes': ligand_genes,
+                'receptor_genes': receptor_genes,
+                'functional_role': functional_role,
+            })
+
+    print(f"Built gene info for {len(gene_info)} genes")
+
+    return systems, system_names, gene_info
+
+
+def load_cluster_expression():
+    """Load cluster-level ligand/receptor expression profiles."""
+    if not CLUSTER_LR_PROFILE_PATH.exists():
+        print(f"Warning: Cluster expression not found at {CLUSTER_LR_PROFILE_PATH}")
+        return {}
+
+    df = pd.read_parquet(CLUSTER_LR_PROFILE_PATH)
+
+    # Create nested dict: cluster -> gene -> expression info
+    cluster_expr = {}
+    for _, row in df.iterrows():
+        cluster = row['cluster']
+        gene = row['gene']
+        if cluster not in cluster_expr:
+            cluster_expr[cluster] = {}
+        cluster_expr[cluster][gene] = {
+            'mean_expr': float(row['mean_expr']),
+            'pct_expressing': float(row['pct_expressing']),
+            'is_ligand': bool(row['is_ligand']),
+            'is_receptor': bool(row['is_receptor']),
+        }
+
+    print(f"Loaded expression profiles for {len(cluster_expr)} clusters")
+    return cluster_expr
 
 
 def load_region_descriptions():
-    """Load region descriptions lookup table."""
-    if REGION_DESCRIPTIONS_PATH.exists():
-        df = pd.read_csv(REGION_DESCRIPTIONS_PATH)
-        # Create lookup dict: acronym -> {full_name, description}
-        region_info = {}
-        for _, row in df.iterrows():
-            region_info[row['acronym']] = {
-                'full_name': row.get('full_name', ''),
-                'description': row.get('description', ''),
-            }
-        print(f"Loaded {len(region_info)} region descriptions")
-        return region_info
-    else:
-        print(f"Warning: Region descriptions not found at {REGION_DESCRIPTIONS_PATH}")
+    """Load region descriptions."""
+    if not REGION_DESCRIPTIONS_PATH.exists():
         return {}
 
+    df = pd.read_csv(REGION_DESCRIPTIONS_PATH)
+    region_info = {}
+    for _, row in df.iterrows():
+        region_info[row['acronym']] = {
+            'full_name': row.get('full_name', ''),
+            'description': row.get('description', ''),
+        }
+    return region_info
 
-def load_signaling_data():
-    """Load ligand-receptor signaling data for cluster-level expression.
 
-    Returns:
-        Tuple of (ligand_to_receptors, cluster_expression, ligand_genes, receptor_genes)
+def load_cluster_np_expression():
+    """Load precomputed cluster-system expression lookup for fast NP mode.
+
+    Returns a dict: system -> cluster -> (max_ligand_expr, max_receptor_expr)
     """
-    if not CLUSTER_LR_PROFILE_PATH.exists() or not LR_PAIRS_PATH.exists():
-        print("Warning: Signaling data not found")
-        return {}, {}, set(), set()
+    if not CLUSTER_NP_EXPR_PATH.exists():
+        print(f"Warning: Cluster NP expression not found at {CLUSTER_NP_EXPR_PATH}")
+        print("Run: uv run python -m src.preprocessing.build_cluster_np_expression")
+        return {}
 
-    # Load ligand-receptor pairs
-    lr_pairs = pd.read_csv(LR_PAIRS_PATH)
+    df = pd.read_parquet(CLUSTER_NP_EXPR_PATH)
 
-    # Filter to neuropeptides/hormones/amines (exclude GABA/Glu etc)
-    lr_pairs = lr_pairs[lr_pairs['ligand_type'].isin(['Neuropeptide', 'Hormone', 'Amine'])]
-
-    # Create lookup: ligand -> [receptors]
-    ligand_to_receptors = lr_pairs.groupby('gene_ligand')['gene_receptor'].apply(list).to_dict()
-
-    # Get sets of ligand and receptor genes
-    ligand_genes = set(lr_pairs['gene_ligand'].unique())
-    receptor_genes = set(lr_pairs['gene_receptor'].unique())
-
-    # Load cluster expression profiles
-    cluster_lr = pd.read_parquet(CLUSTER_LR_PROFILE_PATH)
-
-    # Create lookup: cluster -> {gene: pct_expressing}
-    cluster_expression = cluster_lr.pivot_table(
-        index='cluster', columns='gene', values='pct_expressing', aggfunc='first'
-    ).to_dict('index')
-
-    print(f"Loaded signaling data: {len(ligand_genes)} ligands, {len(receptor_genes)} receptors, {len(cluster_expression)} clusters")
-
-    return ligand_to_receptors, cluster_expression, ligand_genes, receptor_genes
-
-
-def load_all_datasets():
-    """Load all available processed datasets.
-
-    Returns:
-        Dictionary mapping dataset name to (cells_df, config) tuple
-    """
-    # Temporarily disabled datasets
-    DISABLED_DATASETS = {'human_hypomap'}
-
-    datasets = {}
-    available = [d for d in get_processed_datasets() if d not in DISABLED_DATASETS]
-
-    if not available:
-        raise FileNotFoundError(
-            "No processed datasets found.\n"
-            "Run preprocessing first:\n"
-            "  python -m src.datasets.mouse_hypomap\n"
-            "  python -m src.preprocessing.downsample --dataset mouse_hypomap\n"
-            "  python -m src.datasets.human_hypomap\n"
-            "  python -m src.preprocessing.downsample --dataset human_hypomap\n"
-            "  python -m src.datasets.mouse_abc"
+    # Build lookup: system -> cluster -> (ligand, receptor)
+    lookup = {}
+    for _, row in df.iterrows():
+        system = row['system']
+        cluster = row['cluster']
+        if system not in lookup:
+            lookup[system] = {}
+        lookup[system][cluster] = (
+            float(row['max_ligand_expr']),
+            float(row['max_receptor_expr']),
         )
 
-    for name in available:
-        try:
-            cells_df, config = load_dataset(name)
-            datasets[name] = {
-                'cells_df': cells_df,
-                'config': config,
-                'region_col': detect_region_column(cells_df),
-                'cell_type_levels': detect_cell_type_levels(cells_df),
-                'regions': cells_df[detect_region_column(cells_df)].unique().tolist()
-                    if detect_region_column(cells_df) else [],
-                'marker_genes': get_marker_genes(name),
-                'key_receptors': get_key_receptors(name),
-                'region_colors': get_region_colors(name),
-            }
-            print(f"Loaded {name}: {len(cells_df)} cells")
-        except Exception as e:
-            print(f"Warning: Could not load {name}: {e}")
-
-    return datasets
+    print(f"Loaded NP expression lookup for {len(lookup)} systems")
+    return lookup
 
 
 def create_app():
     """Create and configure the Dash application."""
-    # Load all datasets
-    datasets = load_all_datasets()
-    available_datasets = list(datasets.keys())
+    print("\n" + "=" * 50)
+    print("Loading HypoMap Coronal Atlas data...")
+    print("=" * 50 + "\n")
 
-    if not available_datasets:
-        raise ValueError("No datasets could be loaded")
-
-    # Load gene descriptions
-    gene_descriptions = load_gene_descriptions()
-
-    # Load region descriptions
+    # Load all data (includes precomputed region boundaries/centroids)
+    cells_df, slices, region_boundaries, region_centroids = load_cell_data()
+    nt_mapping, nt_types = load_cluster_nt_mapping()
+    np_systems, np_system_names, gene_info = load_np_systems()
+    cluster_expression = load_cluster_expression()
+    cluster_np_expression = load_cluster_np_expression()
     region_descriptions = load_region_descriptions()
 
-    # Load signaling data
-    ligand_to_receptors, cluster_expression, ligand_genes, receptor_genes = load_signaling_data()
-    signaling_data = {
-        'ligand_to_receptors': ligand_to_receptors,
+    # Collect all data into app_data dict
+    app_data = {
+        'cells_df': cells_df,
+        'slices': slices,
+        'nt_mapping': nt_mapping,
+        'nt_types': nt_types,
+        'np_systems': np_systems,
+        'np_system_names': np_system_names,
+        'gene_info': gene_info,
         'cluster_expression': cluster_expression,
-        'ligand_genes': ligand_genes,
-        'receptor_genes': receptor_genes,
+        'cluster_np_expression': cluster_np_expression,
+        'region_boundaries': region_boundaries,
+        'region_centroids': region_centroids,
+        'region_colors': REGION_COLORS,
+        'region_descriptions': region_descriptions,
     }
 
-    # Use mouse_abc as default for now
-    default_dataset = 'mouse_abc' if 'mouse_abc' in available_datasets else available_datasets[0]
-    default_data = datasets[default_dataset]
+    # Get hierarchy levels
+    cell_type_levels = ['class', 'subclass', 'supertype', 'cluster']
 
-    print(f"\nAvailable datasets: {available_datasets}")
-    print(f"Default: {default_dataset}")
-    print(f"  Region column: {default_data['region_col']}")
-    print(f"  Cell type levels: {default_data['cell_type_levels']}")
-    print(f"  Regions: {len(default_data['regions'])}")
+    print(f"\nData summary:")
+    print(f"  Cells: {len(cells_df):,}")
+    print(f"  Slices: {len(slices)}")
+    print(f"  NT types: {len(nt_types)}")
+    print(f"  NP systems: {len(np_system_names)}")
+    print(f"  Regions: {len(cells_df['region'].unique())}")
 
     # Create Dash app
+    assets_path = Path(__file__).parent / "assets"
+    print(f"  Assets path: {assets_path} (exists: {assets_path.exists()})")
     app = Dash(
         __name__,
+        assets_folder=str(assets_path),
         external_stylesheets=[dbc.themes.BOOTSTRAP],
-        title="HypoMap 3D Viewer",
+        title="HypoMap Coronal Atlas",
         suppress_callback_exceptions=True,
     )
 
-    # Set layout with dataset options
+    # Set layout
     app.layout = create_layout(
-        datasets=datasets,
-        available_datasets=available_datasets,
-        default_dataset=default_dataset,
-        ligand_options=sorted(ligand_to_receptors.keys()),
+        cell_type_levels=cell_type_levels,
+        nt_types=nt_types,
+        np_system_names=np_system_names,
     )
 
     # Register callbacks
-    register_callbacks(app, datasets, gene_descriptions, region_descriptions, signaling_data)
+    register_callbacks(app, app_data)
 
     return app
 
@@ -213,7 +351,7 @@ app = create_app()
 
 if __name__ == "__main__":
     print("\n" + "=" * 50)
-    print("HypoMap 3D Atlas Viewer")
+    print("HypoMap Coronal Atlas Viewer")
     print("=" * 50)
     print("\nStarting server at http://localhost:8050")
     print("Press Ctrl+C to stop\n")

@@ -1,0 +1,164 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+    min-height: 100vh;
+}
+
+.app-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 2rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+}
+
+.app-subtitle {
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    color: #6c757d;
+    font-size: 0.9rem;
+    letter-spacing: 0.3px;
+}
+
+.modern-card {
+    border: none !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+    background: rgba(255, 255, 255, 0.95) !important;
+    backdrop-filter: blur(10px);
+}
+
+.modern-card .card-header {
+    background: transparent !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+    font-weight: 600;
+    color: #2d3748;
+    padding: 1rem 1.25rem;
+    border-radius: 16px 16px 0 0 !important;
+}
+
+.modern-card .card-body {
+    padding: 1.25rem;
+}
+
+.control-label {
+    font-size: 0.75rem !important;
+    font-weight: 600 !important;
+    color: #4a5568 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem !important;
+    display: block;
+}
+
+/* Dropdown styling */
+.Select-control {
+    border-radius: 8px !important;
+    border: 1px solid #e2e8f0 !important;
+}
+
+.Select-menu-outer {
+    border-radius: 8px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Slider styling */
+.rc-slider-track {
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%) !important;
+}
+
+.rc-slider-handle {
+    border-color: #667eea !important;
+}
+
+.rc-slider-handle:hover,
+.rc-slider-handle:active {
+    border-color: #764ba2 !important;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2) !important;
+}
+
+/* Gene tooltip - faster hover */
+.gene-tooltip {
+    cursor: help;
+    text-decoration: none !important;
+    border-bottom: 1px dotted #667eea;
+    transition: color 0.1s ease, border-color 0.1s ease;
+}
+
+.gene-tooltip:hover {
+    color: #667eea;
+    border-color: #764ba2;
+}
+
+/* Native tooltip faster appearance */
+[title] {
+    position: relative;
+}
+
+/* Radio and checkbox styling */
+.form-check-input:checked {
+    background-color: #667eea !important;
+    border-color: #667eea !important;
+}
+
+/* Loading spinner color */
+._dash-loading {
+    color: #667eea !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a1a1a1;
+}
+
+/* Card hover effects */
+.modern-card {
+    transition: box-shadow 0.2s ease;
+}
+
+.modern-card:hover {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Button styling */
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+}
+
+/* Progress bar override */
+.progress {
+    border-radius: 6px !important;
+    background-color: #e2e8f0 !important;
+}
+
+.progress-bar {
+    border-radius: 6px !important;
+}
+
+/* HR styling */
+hr {
+    border-color: rgba(0, 0, 0, 0.08) !important;
+    margin: 1rem 0 !important;
+}

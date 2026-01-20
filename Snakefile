@@ -25,7 +25,9 @@ rule all:
         "data/processed/human_hypomap/cells_with_coords.parquet",
         "data/processed/mouse_abc/cells_with_coords.parquet",
         "data/processed/mouse_common/gene_descriptions.csv",
-        "data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet"
+        "data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet",
+        "data/processed/mouse_abc/cluster_np_expression.parquet",
+        "data/processed/mouse_abc/coronal_atlas_regions.json"
 
 # =============================================================================
 # Mouse HypoMap Pipeline
@@ -95,35 +97,35 @@ rule downsample_mouse_abc:
     shell:
         "python -m src.preprocessing.downsample --dataset mouse_abc"
 
-rule download_neuronchat_db:
-    """Download NeuronChat mouse interaction database."""
-    output:
-        "data/raw/mouse_common/interactionDB_mouse.txt"
-    shell:
-        """
-        mkdir -p data/raw/mouse_common
-        curl -L -o {output} https://raw.githubusercontent.com/Wei-BioMath/NeuronChatAnalysis2022/main/NeuronChatDB_table/interactionDB_mouse.txt
-        """
-
-rule build_ligand_receptor_list:
-    """Process NeuronChat database and add manual neuropeptide entries."""
-    input:
-        "data/raw/mouse_common/interactionDB_mouse.txt"
-    output:
-        "data/processed/mouse_common/ligand_receptor_mouse.csv"
-    shell:
-        "python -m src.preprocessing.build_ligand_receptor_list"
-
 rule build_cluster_ligand_receptor_map:
     """Map neuropeptide ligand/receptor expression to ABC clusters."""
     input:
         metadata="data/processed/mouse_abc/cell_metadata.parquet",
-        lr_genes="data/processed/mouse_common/ligand_receptor_mouse.csv"
+        np_map="data/generated/mouse_common/np_map.csv"
     output:
         expression="data/processed/mouse_abc/neuropeptide_expression.parquet",
         profiles="data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet"
     shell:
         "python -m src.preprocessing.build_cluster_ligand_receptor_map --use-imputed"
+
+rule build_lateralized_regions:
+    """Precompute lateralized region boundaries for coronal atlas app."""
+    input:
+        "data/processed/mouse_abc/cells_with_coords.parquet"
+    output:
+        "data/processed/mouse_abc/coronal_atlas_regions.json"
+    shell:
+        "python -m src.preprocessing.build_lateralized_regions"
+
+rule build_cluster_np_expression:
+    """Precompute cluster-system expression lookup for fast NP mode."""
+    input:
+        profiles="data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet",
+        np_map="data/generated/mouse_common/np_map.csv"
+    output:
+        "data/processed/mouse_abc/cluster_np_expression.parquet"
+    shell:
+        "python -m src.preprocessing.build_cluster_np_expression"
 
 # =============================================================================
 # Optional: Connectivity data

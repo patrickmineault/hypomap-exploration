@@ -1,874 +1,701 @@
-"""Dash callbacks for HypoMap 3D Viewer interactivity."""
+"""Dash callbacks for HypoMap Coronal Atlas Viewer."""
 
-from dash import Input, Output, State, ctx, ALL, MATCH
+from dash import Input, Output, State, ctx, callback
 from dash import html
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import plotly.express as px
 import pandas as pd
 import numpy as np
-import re
-import uuid
+from scipy.spatial import cKDTree
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.atlas.region_mapping import (
-    HYPOMAP_TO_CCF,
+# Extended color palette for many categories
+EXTENDED_COLORS = (
+    px.colors.qualitative.Dark24 +
+    px.colors.qualitative.Light24 +
+    px.colors.qualitative.Alphabet
 )
 
 
-def parse_cell_type_with_genes(cell_type_str, gene_descriptions):
-    """Parse a cell type string and identify gene names.
+def get_color_for_category(categories, category):
+    """Get consistent color for a category."""
+    if category not in categories:
+        return '#808080'
+    idx = list(categories).index(category)
+    return EXTENDED_COLORS[idx % len(EXTENDED_COLORS)]
 
-    Args:
-        cell_type_str: String like "101 ZI Pax6 Gaba" or "C465-344: Notch2.Gjb6.Etnppl.Astrocytes"
-        gene_descriptions: Dict of gene_symbol -> {protein_name, description, ...}
 
-    Returns:
-        List of (text, is_gene, gene_info) tuples
+def create_slice_figure(
+    cells_df,
+    slices,
+    mode,
+    cluster_level,
+    nt_system,
+    np_system,
+    threshold,
+    display_options,
+    point_size,
+    subsample_pct,
+    diffusion_enabled,
+    diffusion_range,
+    nt_mapping,
+    np_systems,
+    cluster_expression,
+    cluster_np_expression,
+    region_boundaries,
+    region_centroids,
+    region_colors,
+):
+    """Create the 2x9 grid of coronal slices.
+
+    PERFORMANCE NOTE: This function uses several optimizations to achieve <1s render times:
+    1. Build traces as plain dicts, not go.Scatter objects (avoids Plotly validation overhead)
+    2. Use fig.add_traces() to batch-add all traces at once
+    3. Use Scattergl (WebGL) instead of Scatter for cell points
+    4. Combine all region boundaries into single trace per slice
+    5. Add all annotations via layout dict, not individual add_annotation() calls
+
+    Without these optimizations, render time was 8-10 seconds due to Plotly's slow
+    add_trace() calls with subplots.
     """
-    if not cell_type_str or not gene_descriptions:
-        return [(str(cell_type_str), False, None)]
+    # Subsampling is handled per-mode below (NT mode only subsamples background)
+    n_slices = len(slices)
+    n_cols = 2
+    n_rows = 9
 
-    cell_type_str = str(cell_type_str)
-
-    # Split by common delimiters (space, dot, underscore, hyphen)
-    # But preserve the delimiters for reconstruction
-    parts = re.split(r'([\s\.\-_]+)', cell_type_str)
-
-    result = []
-    for part in parts:
-        # Check if this part is a gene name
-        if part in gene_descriptions:
-            result.append((part, True, gene_descriptions[part]))
-        else:
-            result.append((part, False, None))
-
-    return result
-
-
-# Cache for gene expression data (per dataset)
-_gene_expression_cache = {}
-
-
-def get_h5ad_path(dataset_name):
-    """Get h5ad path for a dataset."""
-    from src.datasets import get_config
-    config = get_config(dataset_name)
-    return config.h5ad_path
-
-
-def get_gene_expression(dataset_name, gene_name, cell_indices):
-    """Load expression values for a gene from the h5ad file."""
-    cache_key = (dataset_name, gene_name)
-    if cache_key in _gene_expression_cache:
-        expr_series = _gene_expression_cache[cache_key]
-        return expr_series.reindex(cell_indices)
-
-    try:
-        import scanpy as sc
-        h5ad_path = get_h5ad_path(dataset_name)
-        adata = sc.read_h5ad(h5ad_path, backed='r')
-
-        # For human data, genes are in feature_name column
-        from src.datasets import get_config
-        config = get_config(dataset_name)
-
-        if config.gene_column and config.gene_column in adata.var.columns:
-            # Search by gene symbol in feature_name
-            gene_mask = adata.var[config.gene_column] == gene_name
-            if gene_mask.sum() == 0:
-                return None
-            gene_idx = np.where(gene_mask)[0][0]
-        else:
-            # Search by var_names directly
-            if gene_name not in adata.var_names:
-                return None
-            gene_idx = adata.var_names.get_loc(gene_name)
-
-        # Get expression for all cells
-        expr = adata.X[:, gene_idx].toarray().flatten()
-        expr_series = pd.Series(expr, index=adata.obs_names)
-
-        # Cache it
-        _gene_expression_cache[cache_key] = expr_series
-
-        return expr_series.reindex(cell_indices)
-    except Exception as e:
-        print(f"Error loading gene expression: {e}")
-        return None
-
-
-def get_region_label(region_name, dataset_name):
-    """Get short label for a region."""
-    if dataset_name == 'human':
-        # Human regions are already abbreviated
-        return region_name
-    # Mouse: use Allen CCF acronyms
-    if region_name in HYPOMAP_TO_CCF:
-        return HYPOMAP_TO_CCF[region_name][0]
-    return region_name.split()[0][:6]
-
-
-def register_callbacks(app, datasets, gene_descriptions=None, region_descriptions=None, signaling_data=None):
-    """Register all callbacks with the Dash app."""
-
-    if gene_descriptions is None:
-        gene_descriptions = {}
-
-    if region_descriptions is None:
-        region_descriptions = {}
-
-    if signaling_data is None:
-        signaling_data = {
-            'ligand_to_receptors': {},
-            'cluster_expression': {},
-            'ligand_genes': set(),
-            'receptor_genes': set(),
-        }
-
-    ligand_to_receptors = signaling_data['ligand_to_receptors']
-    cluster_expression = signaling_data['cluster_expression']
-    ligand_genes = signaling_data['ligand_genes']
-    receptor_genes = signaling_data['receptor_genes']
-
-    # Camera positions for different views (closer for better viewport fill)
-    # Include center to ensure absolute positioning
-    CAMERA_VIEWS = {
-        'sagittal': dict(eye=dict(x=-1.8, y=0, z=0), up=dict(x=0, y=1, z=0), center=dict(x=0, y=0, z=0)),
-        'coronal': dict(eye=dict(x=0, y=0, z=1.8), up=dict(x=0, y=1, z=0), center=dict(x=0, y=0, z=0)),
-        'axial': dict(eye=dict(x=0, y=1.8, z=0), up=dict(x=0, y=0, z=-1), center=dict(x=0, y=0, z=0)),
-    }
-
-    # Callback to update controls when dataset changes
-    @app.callback(
-        [Output('region-dropdown', 'options'),
-         Output('region-dropdown', 'value'),
-         Output('cell-type-slider', 'max'),
-         Output('cell-type-slider', 'marks'),
-         Output('cell-type-slider', 'value'),
-         Output('gene-dropdown', 'options'),
-         Output('gene-dropdown', 'value'),
-         Output('dataset-description', 'children'),
-         Output('current-dataset', 'data')],
-        [Input('dataset-dropdown', 'value')]
+    # Create subplot grid (no subplot_titles - we'll add annotations instead)
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_cols,
+        horizontal_spacing=0.02,
+        vertical_spacing=0.01,
     )
-    def update_controls_for_dataset(dataset_name):
-        """Update all controls when dataset changes."""
-        if dataset_name not in datasets:
-            dataset_name = list(datasets.keys())[0]
 
-        data = datasets[dataset_name]
-        regions = data['regions']
-        cell_type_levels = data['cell_type_levels']
-        marker_genes = data['marker_genes']
-        key_receptors = data['key_receptors']
-        cells_df = data['cells_df']
+    show_boundaries = 'show_boundaries' in display_options
+    show_labels = 'show_labels' in display_options
 
-        # Region dropdown
-        region_options = [{'label': 'All Regions', 'value': 'all'}] + \
-                        [{'label': r, 'value': r} for r in sorted(regions)]
+    # Get unique categories for consistent coloring
+    if mode == 'cluster':
+        unique_categories = sorted(cells_df[cluster_level].dropna().unique())
+    else:
+        unique_categories = []
 
-        # Cell type slider
-        max_idx = len(cell_type_levels) - 1 if cell_type_levels else 0
-        marks = {i: get_cell_type_display_name(level)
-                for i, level in enumerate(cell_type_levels)} if cell_type_levels else {}
-        default_idx = 1 if len(cell_type_levels) > 1 else 0
+    # Precompute cell colors based on mode
+    if mode == 'cluster':
+        # Subsample all cells for cluster mode
+        if subsample_pct < 100:
+            cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
 
-        # Gene dropdown
-        gene_options = [{'label': g, 'value': g} for g in marker_genes + key_receptors]
-        default_gene = marker_genes[0] if marker_genes else None
+        # Color by cluster level
+        color_map = {cat: get_color_for_category(unique_categories, cat)
+                     for cat in unique_categories}
+        cells_df = cells_df.copy()
+        cells_df['_color'] = cells_df[cluster_level].map(color_map).fillna('#808080')
+        cells_df['_legend_group'] = cells_df[cluster_level]
 
-        # Description (short format for new UI)
-        description = f"{len(cells_df):,} cells"
+    elif mode == 'nt':
+        # Gray all cells, black for selected NT type
+        cells_df = cells_df.copy()
 
-        return (
-            region_options, 'all',
-            max_idx, marks, default_idx,
-            gene_options, default_gene,
-            description,
-            dataset_name
+        # Map cluster to NT type (direct lookup is fast)
+        cells_df['_nt_type'] = cells_df['cluster'].map(nt_mapping).fillna('NA')
+
+        # Only subsample background (non-selected) cells, keep all foreground cells
+        foreground_mask = cells_df['_nt_type'] == nt_system
+        foreground_df = cells_df[foreground_mask]
+        background_df = cells_df[~foreground_mask]
+
+        if subsample_pct < 100:
+            background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
+
+        # Background first, foreground last so active cells render on top
+        cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
+
+        cells_df['_color'] = np.where(
+            cells_df['_nt_type'] == nt_system,
+            '#000000',  # Black for selected
+            '#D3D3D3'   # Light gray for others
+        )
+        cells_df['_legend_group'] = np.where(
+            cells_df['_nt_type'] == nt_system,
+            nt_system,
+            'Other'
         )
 
-    @app.callback(
-        Output('scatter-3d', 'figure'),
-        [Input('current-dataset', 'data'),
-         Input('region-dropdown', 'value'),
-         Input('color-by-radio', 'value'),
-         Input('cell-type-slider', 'value'),
-         Input('gene-dropdown', 'value'),
-         Input('ligand-dropdown', 'value'),
-         Input('cell-filter-options', 'value'),
-         Input('display-options', 'value'),
-         Input('point-size-slider', 'value'),
-         Input('z-jitter-slider', 'value'),
-         Input('btn-sagittal', 'n_clicks'),
-         Input('btn-coronal', 'n_clicks'),
-         Input('btn-axial', 'n_clicks')]
-    )
-    def update_scatter(dataset_name, region_filter, color_by, cell_type_idx, gene, ligand, cell_filters, display_opts, point_size,
-                       z_jitter, btn_sag, btn_cor, btn_ax):
-        """Update the main 3D scatter plot."""
-        if dataset_name not in datasets:
-            return create_empty_figure("Dataset not found")
+    elif mode == 'np':
+        # Color by neuropeptide system expression using precomputed lookup
+        cells_df = cells_df.copy()
 
-        data = datasets[dataset_name]
-        cells_df = data['cells_df']
-        region_col = data['region_col']
-        cell_type_levels = data['cell_type_levels']
-        region_colors = data['region_colors']
+        if np_system and np_system in cluster_np_expression:
+            # Use precomputed cluster-system expression lookup
+            system_lookup = cluster_np_expression[np_system]
 
-        # Determine camera based on which view button was clicked
-        # Only set camera when a view button is explicitly clicked, or on initial load/dataset change
-        # Otherwise, let Plotly preserve the current view via uirevision
-        triggered_id = ctx.triggered_id
+            def get_np_color_group(cluster_name):
+                """Get color and legend group for a cluster based on expression."""
+                if cluster_name not in system_lookup:
+                    return '#D3D3D3', 'Neither'
 
-        # Triggers that should reset camera to default view
-        reset_camera_triggers = ['btn-sagittal', 'btn-coronal', 'btn-axial', 'current-dataset']
+                ligand_expr, receptor_expr = system_lookup[cluster_name]
 
-        if triggered_id is None:
-            # True initial load (first callback execution) - set default sagittal view
-            camera = CAMERA_VIEWS['sagittal']
-        elif triggered_id == 'btn-coronal':
-            camera = CAMERA_VIEWS['coronal']
-        elif triggered_id == 'btn-axial':
-            camera = CAMERA_VIEWS['axial']
-        elif triggered_id == 'btn-sagittal' or triggered_id == 'current-dataset':
-            # Sagittal view button or dataset change - reset to sagittal
-            camera = CAMERA_VIEWS['sagittal']
-        else:
-            # Any other trigger (region filter, color mode, etc.) - don't set camera to preserve current view
-            camera = None
+                # Apply threshold filter
+                ligand_above = ligand_expr >= threshold
+                receptor_above = receptor_expr >= threshold
 
-        # Filter data
-        df = cells_df.copy()
-        if region_filter and region_filter != 'all' and region_col:
-            df = df[df[region_col] == region_filter]
-
-        # Filter to neurons only if checkbox is checked
-        if cell_filters and 'neurons_only' in cell_filters:
-            # For ABC data: check 'class' column for neurotransmitter types
-            if 'class' in df.columns:
-                is_neuron = (
-                    df['class'].str.contains('Glut', case=False, na=False) |
-                    df['class'].str.contains('GABA', case=False, na=False) |
-                    df['class'].str.contains('Dopa', case=False, na=False) |
-                    df['class'].str.contains('Sero', case=False, na=False) |
-                    df['class'].str.contains('Chol', case=False, na=False)
-                )
-                df = df[is_neuron]
-            # For HypoMap data: check Author_Class_Curated or similar
-            elif 'Author_Class_Curated' in df.columns:
-                is_neuron = df['Author_Class_Curated'].str.contains('Neuron', case=False, na=False)
-                df = df[is_neuron]
-
-        # Remove cells without coordinates
-        df = df.dropna(subset=['x', 'y', 'z'])
-
-        if len(df) == 0:
-            return create_empty_figure("No cells with coordinates")
-
-        # Apply z-jitter if requested
-        # Jitter spreads cells within their slice for better visualization
-        if z_jitter and z_jitter > 0:
-            df = df.copy()  # Don't modify original
-            z_values = df['z'].values
-            unique_z = np.sort(np.unique(z_values))
-
-            if len(unique_z) > 1:
-                # Compute inter-slice spacing (median difference between consecutive slices)
-                z_diffs = np.diff(unique_z)
-                slice_spacing = np.median(z_diffs)
-
-                # Max jitter is half the slice spacing (so slices don't overlap)
-                max_jitter = slice_spacing * 0.45
-
-                # Generate deterministic jitter based on cell index
-                # Using hash of index for reproducibility across renders
-                rng = np.random.default_rng(seed=42)
-                jitter_values = rng.uniform(-1, 1, size=len(df))
-
-                # Scale by jitter amount and apply
-                df['z'] = z_values + jitter_values * max_jitter * z_jitter
-
-        # Determine coloring
-        if color_by == 'region' and region_col:
-            color_col = region_col
-            colors = df[region_col].map(lambda r: region_colors.get(r, '#CCCCCC'))
-            colorscale = None
-            showscale = False
-        elif color_by == 'cell_type' and cell_type_levels:
-            idx = min(cell_type_idx, len(cell_type_levels) - 1)
-            color_col = cell_type_levels[idx]
-            unique_types = df[color_col].unique()
-            color_map = {t: px.colors.qualitative.Dark24[i % len(px.colors.qualitative.Dark24)]
-                        for i, t in enumerate(unique_types)}
-            colors = df[color_col].map(color_map)
-            colorscale = None
-            showscale = False
-        elif color_by == 'gene' and gene:
-            expr = get_gene_expression(dataset_name, gene, df.index)
-            if expr is not None and not expr.isna().all():
-                colors = expr.values
-                colorscale = 'Viridis'
-                showscale = True
-            else:
-                colors = 'lightgray'
-                colorscale = None
-                showscale = False
-        elif color_by == 'signaling' and ligand and cluster_expression:
-            # Signaling mode: color by receptor expression, mark ligand producers
-            receptors = ligand_to_receptors.get(ligand, [])
-
-            # Get receptor score for each cell based on cluster
-            def get_receptor_score(cluster):
-                expr = cluster_expression.get(cluster, {})
-                scores = [expr.get(r, 0) for r in receptors if r in expr]
-                return max(scores) if scores else 0
-
-            # Get ligand score for each cell
-            def get_ligand_score(cluster):
-                expr = cluster_expression.get(cluster, {})
-                return expr.get(ligand, 0)
-
-            if 'cluster' in df.columns:
-                df = df.copy()
-                df['receptor_score'] = df['cluster'].map(get_receptor_score)
-                df['ligand_score'] = df['cluster'].map(get_ligand_score)
-                colors = df['receptor_score'].values
-                colorscale = 'Blues'
-                showscale = True
-            else:
-                colors = 'lightgray'
-                colorscale = None
-                showscale = False
-        else:
-            if region_col:
-                colors = df[region_col].map(lambda r: region_colors.get(r, '#CCCCCC'))
-            else:
-                colors = 'steelblue'
-            colorscale = None
-            showscale = False
-
-        # Create 3D scatter
-        fig = go.Figure()
-
-        # Add region boundary ellipsoids if enabled
-        if 'show_mesh' in (display_opts or []) and region_col:
-            for region in df[region_col].unique():
-                if region == 'NA' or region == 'Unknown':
-                    continue
-                region_df = df[df[region_col] == region]
-                if len(region_df) < 10:
-                    continue
-
-                coords = region_df[['x', 'y', 'z']].values
-                center = coords.mean(axis=0)
-                cov = np.cov(coords.T)
-
-                eigenvalues, eigenvectors = np.linalg.eigh(cov)
-                radii = 2.0 * np.sqrt(np.maximum(eigenvalues, 1))
-
-                u = np.linspace(0, 2 * np.pi, 20)
-                v = np.linspace(0, np.pi, 15)
-                x_sphere = np.outer(np.cos(u), np.sin(v))
-                y_sphere = np.outer(np.sin(u), np.sin(v))
-                z_sphere = np.outer(np.ones_like(u), np.cos(v))
-
-                sphere_pts = np.stack([x_sphere.flatten(), y_sphere.flatten(), z_sphere.flatten()])
-                scaled_pts = np.diag(radii) @ sphere_pts
-                rotated_pts = eigenvectors @ scaled_pts
-                ellipsoid_pts = rotated_pts + center.reshape(3, 1)
-
-                region_color = region_colors.get(region, '#CCCCCC')
-                fig.add_trace(go.Surface(
-                    x=ellipsoid_pts[0].reshape(20, 15),
-                    y=ellipsoid_pts[1].reshape(20, 15),
-                    z=ellipsoid_pts[2].reshape(20, 15),
-                    opacity=0.2,
-                    colorscale=[[0, region_color], [1, region_color]],
-                    showscale=False,
-                    hoverinfo='skip',
-                    showlegend=False
-                ))
-
-        # Add cells
-        marker_dict = dict(
-            size=point_size,
-            color=colors,
-            opacity=0.7,
-            line=dict(width=0)
-        )
-        if colorscale:
-            marker_dict['colorscale'] = colorscale
-            marker_dict['showscale'] = showscale
-            if color_by == 'signaling' and ligand:
-                colorbar_title = f'{ligand} receptor %'
-            elif gene:
-                colorbar_title = gene
-            else:
-                colorbar_title = ''
-            marker_dict['colorbar'] = dict(title=colorbar_title, thickness=15)
-
-        text_data = df[region_col] if region_col else df.index.astype(str)
-        if color_by == 'cell_type' and cell_type_levels:
-            idx = min(cell_type_idx, len(cell_type_levels) - 1)
-            text_data = df[cell_type_levels[idx]]
-
-        fig.add_trace(go.Scatter3d(
-            x=df['x'],
-            y=df['y'],
-            z=df['z'],
-            mode='markers',
-            marker=marker_dict,
-            customdata=df.index.tolist(),
-            hovertemplate=(
-                f"<b>{color_by.title()}</b>: %{{text}}<br>" +
-                "X: %{x:.0f}<br>" +
-                "Y: %{y:.0f}<br>" +
-                "Z: %{z:.0f}<br>" +
-                "<extra></extra>"
-            ),
-            text=text_data,
-            name='Cells'
-        ))
-
-        # Add ligand producer overlay when in signaling mode
-        if color_by == 'signaling' and ligand and 'ligand_score' in df.columns:
-            ligand_cells = df[df['ligand_score'] > 10]  # >10% expressing
-            if len(ligand_cells) > 0:
-                fig.add_trace(go.Scatter3d(
-                    x=ligand_cells['x'],
-                    y=ligand_cells['y'],
-                    z=ligand_cells['z'],
-                    mode='markers',
-                    marker=dict(
-                        size=point_size + 2,
-                        color='red',
-                        symbol='diamond',
-                        opacity=0.9
-                    ),
-                    customdata=ligand_cells.index.tolist(),
-                    hovertemplate=(
-                        f"<b>{ligand} producer</b><br>" +
-                        f"Expression: %{{text:.0f}}%<br>" +
-                        "<extra></extra>"
-                    ),
-                    text=ligand_cells['ligand_score'],
-                    name=f'{ligand} producers',
-                    showlegend=True
-                ))
-
-        # Add region labels
-        scene_annotations = []
-        if 'show_labels' in (display_opts or []) and region_col:
-            # For ABC data, split by hemisphere (left/right based on x coordinate = ML axis)
-            x_midline = df['x'].median()
-
-            for region in df[region_col].unique():
-                if region in ['NA', 'Unknown', 'HY-unassigned']:
-                    continue
-                region_df = df[df[region_col] == region]
-                if len(region_df) < 5:
-                    continue
-
-                label = get_region_label(region, dataset_name)
-
-                # Check if region has substantial populations on both sides of midline
-                left_df = region_df[region_df['x'] < x_midline]
-                right_df = region_df[region_df['x'] >= x_midline]
-                left_frac = len(left_df) / len(region_df)
-                right_frac = len(right_df) / len(region_df)
-
-                # Bilateral if at least 25% of cells on each side
-                is_bilateral = left_frac >= 0.25 and right_frac >= 0.25
-
-                if is_bilateral:
-                    # Label each hemisphere separately
-                    for hemi_df in [left_df, right_df]:
-                        if len(hemi_df) >= 3:
-                            centroid = hemi_df[['x', 'y', 'z']].mean()
-                            scene_annotations.append(dict(
-                                x=centroid['x'],
-                                y=centroid['y'],
-                                z=centroid['z'],
-                                text=label,
-                                showarrow=False,
-                                bgcolor='rgba(255, 255, 255, 0.8)',
-                                borderpad=2,
-                                font=dict(size=9, color='black', family='Arial'),
-                                opacity=0.85
-                            ))
+                if ligand_above and receptor_above:
+                    # Both - blend to purple, intensity by average
+                    intensity = min(1.0, (ligand_expr + receptor_expr) / 10)
+                    r = int(128 + 127 * intensity)
+                    b = int(128 + 127 * intensity)
+                    return f'rgb({r}, 0, {b})', 'Both'
+                elif ligand_above:
+                    # Red for ligand
+                    intensity = min(1.0, ligand_expr / 5)
+                    r = int(100 + 155 * intensity)
+                    return f'rgb({r}, 50, 50)', 'Ligand'
+                elif receptor_above:
+                    # Blue for receptor
+                    intensity = min(1.0, receptor_expr / 5)
+                    b = int(100 + 155 * intensity)
+                    return f'rgb(50, 50, {b})', 'Receptor'
                 else:
-                    # Midline or unilateral region - single label
-                    centroid = region_df[['x', 'y', 'z']].mean()
-                    scene_annotations.append(dict(
-                        x=centroid['x'],
-                        y=centroid['y'],
-                        z=centroid['z'],
-                        text=label,
-                        showarrow=False,
-                        bgcolor='rgba(255, 255, 255, 0.8)',
-                        borderpad=2,
-                        font=dict(size=9, color='black', family='Arial'),
-                        opacity=0.85
-                    ))
+                    return '#D3D3D3', 'Neither'
 
-        # Add axis legend
-        x_min, x_max = df['x'].min(), df['x'].max()
-        y_min, y_max = df['y'].min(), df['y'].max()
-        z_min, _ = df['z'].min(), df['z'].max()
+            # Precompute per-cluster, then map to cells
+            unique_clusters = cells_df['cluster'].unique()
+            cluster_colors = {c: get_np_color_group(c)[0] for c in unique_clusters}
+            cluster_groups = {c: get_np_color_group(c)[1] for c in unique_clusters}
 
-        legend_origin = [x_min - (x_max - x_min) * 0.15, y_max + (y_max - y_min) * 0.1, z_min]
-        arrow_len = (x_max - x_min) * 0.12
+            cells_df['_color'] = cells_df['cluster'].map(cluster_colors)
+            cells_df['_legend_group'] = cells_df['cluster'].map(cluster_groups)
 
-        for axis_name, axis_color, offset in [
-            ('LR', 'red', [arrow_len, 0, 0]),      # Left-Right (medial-lateral)
-            ('DV', 'green', [0, -arrow_len, 0]),   # Dorsal-Ventral
-            ('AP', 'blue', [0, 0, arrow_len])      # Anterior-Posterior
-        ]:
-            fig.add_trace(go.Scatter3d(
-                x=[legend_origin[0], legend_origin[0] + offset[0]],
-                y=[legend_origin[1], legend_origin[1] + offset[1]],
-                z=[legend_origin[2], legend_origin[2] + offset[2]],
-                mode='lines+text',
-                line=dict(color=axis_color, width=4),
-                text=['', axis_name],
-                textposition='middle right',
-                textfont=dict(size=10, color=axis_color),
-                hoverinfo='skip',
-                showlegend=False
-            ))
+            # Only subsample background (Neither) cells, keep all foreground cells
+            foreground_mask = cells_df['_legend_group'] != 'Neither'
+            foreground_df = cells_df[foreground_mask]
+            background_df = cells_df[~foreground_mask]
 
-        # Build scene dict - only include camera if a view button was clicked
-        scene_dict = dict(
-            xaxis=dict(visible=False),
-            yaxis=dict(autorange='reversed', visible=False),
-            zaxis=dict(visible=False),
-            aspectmode='data',
-            annotations=scene_annotations
-        )
-        if camera is not None:
-            scene_dict['camera'] = camera
+            if subsample_pct < 100:
+                background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
 
-        # Determine uirevision - changes when we want to reset camera, stays constant otherwise
-        if triggered_id is None:
-            uirevision = 'initial'
-        elif triggered_id in reset_camera_triggers:
-            uirevision = triggered_id
+            cells_df = pd.concat([foreground_df, background_df], ignore_index=True)
+
+            # Apply diffusion range filter if enabled
+            if 'enabled' in (diffusion_enabled or []):
+                # Z-axis scaling factor for anisotropic distance
+                # Gives Z an extra 0.15mm range compared to XY (for slice thickness)
+                z_extra = 0.15  # mm
+                z_scale = diffusion_range / (diffusion_range + z_extra)
+
+                # Get ligand cell coordinates (include 'Both' as ligand sources)
+                ligand_mask = cells_df['_legend_group'].isin(['Ligand', 'Both'])
+                ligand_cells = cells_df[ligand_mask]
+
+                if len(ligand_cells) > 0:
+                    # Build scaled coordinates for KD-tree
+                    ligand_coords = np.column_stack([
+                        ligand_cells['x'].values,
+                        ligand_cells['y'].values,
+                        ligand_cells['z'].values * z_scale
+                    ])
+                    tree = cKDTree(ligand_coords)
+
+                    # Query receptor cells
+                    receptor_mask = cells_df['_legend_group'] == 'Receptor'
+
+                    if receptor_mask.sum() > 0:
+                        receptor_indices = cells_df.index[receptor_mask]
+                        receptor_coords = np.column_stack([
+                            cells_df.loc[receptor_indices, 'x'].values,
+                            cells_df.loc[receptor_indices, 'y'].values,
+                            cells_df.loc[receptor_indices, 'z'].values * z_scale
+                        ])
+
+                        # Find distance to nearest ligand source
+                        distances, _ = tree.query(receptor_coords)
+
+                        # Classify receptors as within or outside range
+                        within_range = distances <= diffusion_range
+
+                        # Update colors and legend groups
+                        cells_df.loc[receptor_indices[within_range], '_color'] = '#4169E1'  # Blue - in range
+                        cells_df.loc[receptor_indices[within_range], '_legend_group'] = 'Receptor (in range)'
+                        cells_df.loc[receptor_indices[~within_range], '_color'] = '#40E0D0'  # Turquoise - out of range
+                        cells_df.loc[receptor_indices[~within_range], '_legend_group'] = 'Receptor (out of range)'
+
         else:
-            uirevision = 'constant'
+            if subsample_pct < 100:
+                cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
+            cells_df['_color'] = '#D3D3D3'
+            cells_df['_legend_group'] = 'NA'
 
-        fig.update_layout(
-            scene=scene_dict,
-            margin=dict(l=0, r=0, t=30, b=0),
-            uirevision=uirevision
+    # Build all traces as a list first, then add in batch
+    all_traces = []
+    all_annotations = []
+
+    for slice_idx, z_slice in enumerate(slices):
+        row = slice_idx // n_cols + 1
+        col = slice_idx % n_cols + 1
+        # Get axis references for this subplot
+        xaxis = f'x{slice_idx + 1}' if slice_idx > 0 else 'x'
+        yaxis = f'y{slice_idx + 1}' if slice_idx > 0 else 'y'
+
+        slice_df = cells_df[cells_df['z_slice'] == z_slice]
+
+        # Add region boundaries - combine into single trace per slice
+        if show_boundaries and z_slice in region_boundaries:
+            all_x = []
+            all_y = []
+            for region, hull_points in region_boundaries[z_slice].items():
+                x_coords = [p[0] for p in hull_points]
+                y_coords = [p[1] for p in hull_points]
+                all_x.extend(x_coords + [None])
+                all_y.extend(y_coords + [None])
+
+            if all_x:
+                all_traces.append({
+                    'type': 'scatter',
+                    'x': all_x,
+                    'y': all_y,
+                    'mode': 'lines',
+                    'fill': 'toself',
+                    'fillcolor': 'rgba(240, 240, 240, 0.5)',
+                    'line': {'color': '#CCCCCC', 'width': 1},
+                    'hoverinfo': 'skip',
+                    'showlegend': False,
+                    'xaxis': xaxis,
+                    'yaxis': yaxis,
+                })
+
+        # Add cells as single trace with per-point colors
+        if len(slice_df) > 0:
+            if mode == 'np':
+                group_order_map = {'Neither': 0, 'Receptor (out of range)': 1, 'Receptor (in range)': 2,
+                                   'Receptor': 3, 'Both': 4, 'Ligand': 5}
+                slice_df = slice_df.copy()
+                slice_df['_sort'] = slice_df['_legend_group'].map(group_order_map).fillna(0)
+                slice_df = slice_df.sort_values('_sort')
+
+            all_traces.append({
+                'type': 'scattergl',
+                'x': slice_df['x'].tolist(),
+                'y': slice_df['y'].tolist(),
+                'mode': 'markers',
+                'marker': {
+                    'size': point_size,
+                    'color': slice_df['_color'].tolist(),
+                    'opacity': 0.7,
+                },
+                'showlegend': False,
+                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]}<br><extra></extra>',
+                'customdata': slice_df[['cluster', 'region_display']].values.tolist(),
+                'xaxis': xaxis,
+                'yaxis': yaxis,
+            })
+
+        # Collect annotations
+        if show_labels and z_slice in region_centroids:
+            for region, (cx, cy) in region_centroids[z_slice].items():
+                all_annotations.append({
+                    'x': cx,
+                    'y': cy,
+                    'xref': xaxis,
+                    'yref': yaxis,
+                    'text': region,
+                    'showarrow': False,
+                    'font': {'size': 8, 'color': '#333'},
+                    'opacity': 0.7,
+                })
+
+    # Add all traces at once (much faster than individual add_trace calls)
+    fig.add_traces(all_traces)
+
+    # Update layout and add all annotations at once
+
+    # Add Z-value labels to annotations
+    for slice_idx, z_slice in enumerate(slices):
+        xaxis = f'x{slice_idx + 1}' if slice_idx > 0 else 'x'
+        yaxis = f'y{slice_idx + 1}' if slice_idx > 0 else 'y'
+        all_annotations.append({
+            'xref': f'{xaxis} domain',
+            'yref': f'{yaxis} domain',
+            'x': 0.98,
+            'y': 0.02,
+            'text': f'Z={z_slice}',
+            'showarrow': False,
+            'font': {'size': 9, 'color': '#666'},
+            'xanchor': 'right',
+            'yanchor': 'bottom',
+        })
+
+    fig.update_layout(
+        height=2000,
+        showlegend=False,
+        margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        annotations=all_annotations,
+    )
+
+    # Compute data range for default zoom (1.2x zoom = tighter range for x)
+    x_min, x_max = cells_df['x'].min(), cells_df['x'].max()
+    x_center = (x_min + x_max) / 2
+    x_range = (x_max - x_min) / 1.2  # Zoom in by 1.2x
+
+    x_range_final = [x_center - x_range / 2, x_center + x_range / 2]
+    y_range_final = [5.5, 8.5]  # Fixed y range as requested
+
+    # Update all axes - link them together with matches
+    for i in range(1, n_rows * n_cols + 1):
+        row_i = (i - 1) // n_cols + 1
+        col_i = (i - 1) % n_cols + 1
+
+        fig.update_xaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            matches='x',  # Link all x-axes together
+            range=x_range_final,
+            row=row_i,
+            col=col_i,
+        )
+        fig.update_yaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            matches='y',  # Link all y-axes together
+            scaleanchor='x',
+            scaleratio=1,
+            range=y_range_final,
+            row=row_i,
+            col=col_i,
         )
 
-        return fig
+    return fig
 
-    def create_cell_type_display(cell_type_str):
-        """Create display elements for a cell type with highlighted genes.
 
-        Returns:
-            Tuple of (elements list, set of gene names found)
-        """
-        parsed = parse_cell_type_with_genes(cell_type_str, gene_descriptions)
+def create_gene_bar(gene, expr, gene_info, is_ligand=True):
+    """Create a horizontal bar for gene expression with hoverable tooltip."""
+    # Get system info for this gene
+    systems = gene_info.get(gene, [])
+    if systems:
+        # Build tooltip text
+        system_names = list(set(s['system'] for s in systems))
+        first_system = systems[0]
+        tooltip_lines = [
+            f"System: {', '.join(system_names)}",
+            f"Ligands: {', '.join(first_system['ligand_genes'])}",
+            f"Receptors: {', '.join(first_system['receptor_genes'])}",
+        ]
+        if first_system['functional_role']:
+            tooltip_lines.append(f"Function: {first_system['functional_role']}")
+        tooltip_text = '\n'.join(tooltip_lines)
+    else:
+        tooltip_text = f"{gene}: No system info available"
 
-        elements = []
-        genes_found = set()
+    # Normalize expression for bar width (assuming max ~10 log2CPM)
+    bar_width_pct = min(100, expr * 10)
+    color = '#667eea' if is_ligand else '#764ba2'  # Modern gradient colors
 
-        for text, is_gene, gene_info in parsed:
-            if is_gene and gene_info:
-                genes_found.add(text)
-                elements.append(
-                    html.Span(
-                        text,
+    return html.Div([
+        # Gene name - fixed width
+        html.Abbr(
+            gene,
+            title=tooltip_text,
+            className="gene-tooltip",
+            style={
+                'fontSize': '0.8rem',
+                'width': '70px',
+                'flexShrink': '0',
+                'textDecoration': 'none',
+                'borderBottom': '1px dotted #667eea',
+            }
+        ),
+        # Bar container - flex to fill space
+        html.Div(
+            style={
+                'flex': '1',
+                'height': '14px',
+                'background': '#e2e8f0',
+                'borderRadius': '4px',
+                'marginLeft': '8px',
+                'marginRight': '8px',
+                'overflow': 'hidden',
+            },
+            children=[
+                html.Div(
+                    style={
+                        'width': f'{bar_width_pct}%',
+                        'height': '100%',
+                        'background': f'linear-gradient(90deg, {color} 0%, {color}dd 100%)',
+                        'borderRadius': '4px',
+                    }
+                )
+            ]
+        ),
+        # Value - fixed width, right aligned
+        html.Span(
+            f'{expr:.1f}',
+            style={
+                'fontSize': '0.75rem',
+                'width': '32px',
+                'textAlign': 'right',
+                'flexShrink': '0',
+                'color': '#718096',
+                'fontWeight': '500',
+            }
+        ),
+    ], style={'marginBottom': '6px', 'display': 'flex', 'alignItems': 'center'})
+
+
+def create_region_bar(region_name, count, total, index):
+    """Create a horizontal bar for region distribution."""
+    pct = (count / total) * 100
+    # Gradient colors based on index
+    colors = ['#667eea', '#764ba2', '#9f7aea', '#b794f4', '#d6bcfa']
+    color = colors[index % len(colors)]
+
+    return html.Div([
+        html.Div([
+            html.Span(
+                region_name,
+                style={
+                    'fontSize': '0.8rem',
+                    'minWidth': '50px',
+                    'display': 'inline-block',
+                    'fontWeight': '500',
+                    'color': '#4a5568',
+                }
+            ),
+            html.Div(
+                style={
+                    'display': 'inline-block',
+                    'flex': '1',
+                    'height': '18px',
+                    'background': '#e2e8f0',
+                    'borderRadius': '4px',
+                    'marginLeft': '8px',
+                    'marginRight': '8px',
+                    'overflow': 'hidden',
+                },
+                children=[
+                    html.Div(
                         style={
-                            'color': '#6f42c1',
-                            'fontWeight': 'bold',
+                            'width': f'{pct}%',
+                            'height': '100%',
+                            'background': f'linear-gradient(90deg, {color} 0%, {color}cc 100%)',
+                            'borderRadius': '4px',
                         }
                     )
-                )
-            else:
-                elements.append(html.Span(text))
+                ]
+            ),
+            html.Span(
+                f'{count}',
+                style={
+                    'fontSize': '0.75rem',
+                    'color': '#718096',
+                    'minWidth': '30px',
+                    'textAlign': 'right',
+                    'fontWeight': '500',
+                }
+            ),
+        ], style={'marginBottom': '6px', 'display': 'flex', 'alignItems': 'center'}),
+    ])
 
-        return elements, genes_found
 
-    @app.callback(
-        [Output('cell-prompt', 'style'),
-         Output('cell-info', 'style'),
-         Output('cell-region', 'children'),
-         Output('cell-coords', 'children'),
-         Output('cell-types', 'children')],
-        [Input('scatter-3d', 'clickData'),
-         Input('current-dataset', 'data')]
-    )
-    def update_selection(click_data, dataset_name):
-        """Update the details panel based on single cell click."""
-        if dataset_name not in datasets:
-            return ({'display': 'block'}, {'display': 'none'}, "", "", [])
+def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, region_descriptions, gene_info):
+    """Create cell details panel content."""
+    if not click_data or 'points' not in click_data or not click_data['points']:
+        return html.P("Click on a cell to see details", className="text-muted")
 
-        data = datasets[dataset_name]
-        cells_df = data['cells_df']
-        region_col = data['region_col']
-        cell_type_levels = data['cell_type_levels']
+    point = click_data['points'][0]
+    custom_data = point.get('customdata', [])
 
-        if click_data and click_data.get('points'):
-            point = click_data['points'][0]
-            point_idx = point.get('customdata')
-            if point_idx is not None and point_idx in cells_df.index:
-                cell = cells_df.loc[point_idx]
+    if len(custom_data) < 2:
+        return html.P("No data available for this cell", className="text-muted")
 
-                region_acronym = cell[region_col] if region_col else "N/A"
+    cluster_name = custom_data[0]
+    region = custom_data[1]
 
-                # Build region display with full name and description
-                if region_acronym in region_descriptions:
-                    region_info = region_descriptions[region_acronym]
-                    region = html.Div([
-                        html.Span(region_acronym, className="fw-bold"),
-                        html.Span(f" - {region_info['full_name']}", className="text-muted"),
-                        html.P(
-                            region_info['description'],
-                            className="text-muted small mt-1 mb-0",
-                            style={'fontSize': '0.8rem', 'lineHeight': '1.3'}
-                        ) if region_info['description'] else None
-                    ])
-                else:
-                    region = region_acronym
+    # Find the cell in the dataframe
+    cell_info = cells_df[cells_df['cluster'] == cluster_name].iloc[0] if len(cells_df[cells_df['cluster'] == cluster_name]) > 0 else None
 
-                coords = f"X: {cell['x']:.0f}\nY: {cell['y']:.0f}\nZ: {cell['z']:.0f}"
+    if cell_info is None:
+        return html.P("Cell not found", className="text-muted")
 
-                type_items = []
-                all_genes = set()
+    # Get region info
+    region_info = region_descriptions.get(region, {})
+    region_full_name = region_info.get('full_name', region)
 
-                for level in cell_type_levels:
-                    if level in cell.index:
-                        # Format level name for display
-                        if '_named' in level:
-                            level_name = level.replace('_named', '').replace('C', '')
-                        else:
-                            level_name = level.capitalize()
+    # Get NT type (direct lookup)
+    nt_type = nt_mapping.get(cluster_name, 'Unknown')
 
-                        # Create display with highlighted genes
-                        cell_type_elements, genes_found = create_cell_type_display(cell[level])
-                        all_genes.update(genes_found)
+    # Get top ligands and receptors for this cluster
+    top_ligands = []
+    top_receptors = []
+    if cluster_name in cluster_expression:
+        cluster_expr = cluster_expression[cluster_name]
+        for gene, info in cluster_expr.items():
+            if info['mean_expr'] >= 1:  # Expression threshold for display
+                if info['is_ligand']:
+                    top_ligands.append((gene, info['mean_expr']))
+                if info['is_receptor']:
+                    top_receptors.append((gene, info['mean_expr']))
 
-                        type_items.append(
-                            html.Div([
-                                html.Span(f"{level_name}: ", className="text-muted"),
-                                html.Span(cell_type_elements, className="fw-bold")
-                            ], className="small mb-1")
-                        )
+    top_ligands = sorted(top_ligands, key=lambda x: -x[1])[:5]
+    top_receptors = sorted(top_receptors, key=lambda x: -x[1])[:5]
 
-                # Add gene descriptions section if any genes found
-                if all_genes and gene_descriptions:
-                    type_items.append(html.Hr(style={'margin': '8px 0'}))
-                    type_items.append(
-                        html.Div("Marker Genes:", className="text-muted small fw-bold mb-1")
-                    )
+    # Get region distribution for this cluster
+    cluster_regions = cells_df[cells_df['cluster'] == cluster_name]['region'].value_counts().head(5)
 
-                    for gene in sorted(all_genes):
-                        if gene in gene_descriptions:
-                            info = gene_descriptions[gene]
-                            protein = info.get('protein_name', '')
-                            desc = info.get('description', '')
+    return html.Div([
+        # Cluster info
+        html.Div([
+            html.H6("Cluster", className="text-muted mb-1"),
+            html.P(cluster_name, className="fw-bold mb-2", style={'fontSize': '0.9rem'}),
+        ]),
 
-                            # Create expandable description if long
-                            if desc and len(desc) > 150:
-                                truncated = desc[:150] + "..."
-                                gene_id = f"desc-{gene}-{hash(point_idx) % 10000}"
-                                desc_element = html.Div([
-                                    html.Span(
-                                        truncated,
-                                        id={'type': 'gene-desc-short', 'gene': gene_id},
-                                        style={'cursor': 'pointer'}
-                                    ),
-                                    html.Span(
-                                        " [more]",
-                                        style={'color': '#6f42c1', 'cursor': 'pointer', 'fontSize': '0.7rem'}
-                                    ),
-                                    dbc.Collapse(
-                                        html.Div(desc, style={'marginTop': '4px'}),
-                                        id={'type': 'gene-desc-full', 'gene': gene_id},
-                                        is_open=False
-                                    )
-                                ], id={'type': 'gene-desc-container', 'gene': gene_id}, n_clicks=0)
-                            elif desc:
-                                desc_element = html.Div(desc)
-                            else:
-                                desc_element = ""
+        # Hierarchy
+        html.Div([
+            html.H6("Cell Type Hierarchy", className="text-muted mb-1"),
+            html.Ul([
+                html.Li(f"Class: {cell_info.get('class', 'NA')}", style={'fontSize': '0.85rem'}),
+                html.Li(f"Subclass: {cell_info.get('subclass', 'NA')}", style={'fontSize': '0.85rem'}),
+                html.Li(f"Supertype: {cell_info.get('supertype', 'NA')}", style={'fontSize': '0.85rem'}),
+            ], className="mb-2", style={'paddingLeft': '1.2rem'}),
+        ]),
 
-                            type_items.append(
-                                html.Div([
-                                    html.Span(gene, style={'color': '#6f42c1', 'fontWeight': 'bold'}),
-                                    html.Span(f" - {protein}", className="text-muted") if protein else "",
-                                    html.Div(
-                                        desc_element,
-                                        className="text-muted",
-                                        style={'fontSize': '0.75rem', 'marginLeft': '8px', 'marginBottom': '4px'}
-                                    ) if desc else ""
-                                ], className="small mb-1")
-                            )
+        html.Hr(),
 
-                # Add signaling profile section if we have cluster info
-                if 'cluster' in cell.index and cluster_expression:
-                    cluster = cell['cluster']
-                    cluster_expr = cluster_expression.get(cluster, {})
+        # NT system
+        html.Div([
+            html.H6("Neurotransmitter", className="text-muted mb-1"),
+            html.P(nt_type, className="fw-bold mb-2"),
+        ]),
 
-                    if cluster_expr:
-                        # Get top ligands expressed by this cluster
-                        ligands_expressed = [
-                            (g, pct) for g, pct in cluster_expr.items()
-                            if g in ligand_genes and pct > 10
-                        ]
-                        ligands_expressed.sort(key=lambda x: -x[1])
+        html.Hr(),
 
-                        # Get top receptors expressed by this cluster
-                        receptors_expressed = [
-                            (g, pct) for g, pct in cluster_expr.items()
-                            if g in receptor_genes and pct > 10
-                        ]
-                        receptors_expressed.sort(key=lambda x: -x[1])
+        # Top regions bar chart - separate bars for each region
+        html.Div([
+            html.H6("Top 5 Regions", className="text-muted mb-2", style={'fontSize': '0.85rem', 'fontWeight': '600'}),
+            html.Div([
+                create_region_bar(region, count, cluster_regions.sum(), i)
+                for i, (region, count) in enumerate(cluster_regions.items())
+            ]) if len(cluster_regions) > 0 else html.P("No region data", className="text-muted small"),
+        ]),
 
-                        if ligands_expressed or receptors_expressed:
-                            type_items.append(html.Hr(style={'margin': '8px 0'}))
-                            type_items.append(
-                                html.Div("Signaling Profile:", className="text-muted small fw-bold mb-1")
-                            )
+        html.Hr(),
 
-                            if ligands_expressed:
-                                type_items.append(
-                                    html.Div([
-                                        html.Span("Ligands: ", className="text-muted small"),
-                                        html.Span(
-                                            ", ".join([f"{g} ({pct:.0f}%)" for g, pct in ligands_expressed[:5]]),
-                                            style={'color': '#dc3545', 'fontSize': '0.8rem'}
-                                        )
-                                    ], className="mb-1")
-                                )
+        # Neuropeptide profile - graphical bars with hoverable labels
+        html.Div([
+            html.H6("Top Ligands [log₂(CPM)]", className="text-muted mb-1"),
+            html.Div([
+                create_gene_bar(gene, expr, gene_info, is_ligand=True)
+                for gene, expr in top_ligands
+            ] if top_ligands else [html.P("None expressed", className="text-muted small")]),
+        ], className="mb-3"),
 
-                            if receptors_expressed:
-                                type_items.append(
-                                    html.Div([
-                                        html.Span("Receptors: ", className="text-muted small"),
-                                        html.Span(
-                                            ", ".join([f"{g} ({pct:.0f}%)" for g, pct in receptors_expressed[:5]]),
-                                            style={'color': '#0d6efd', 'fontSize': '0.8rem'}
-                                        )
-                                    ], className="mb-1")
-                                )
+        html.Div([
+            html.H6("Top Receptors [log₂(CPM)]", className="text-muted mb-1"),
+            html.Div([
+                create_gene_bar(gene, expr, gene_info, is_ligand=False)
+                for gene, expr in top_receptors
+            ] if top_receptors else [html.P("None expressed", className="text-muted small")]),
+        ]),
+    ])
 
-                return (
-                    {'display': 'none'},
-                    {'display': 'block'},
-                    region,
-                    coords,
-                    type_items
-                )
 
-        return ({'display': 'block'}, {'display': 'none'}, "", "", [])
+def register_callbacks(app, app_data):
+    """Register all callbacks for the application."""
+
+    cells_df = app_data['cells_df']
+    slices = app_data['slices']
+    nt_mapping = app_data['nt_mapping']
+    nt_types = app_data['nt_types']
+    np_systems = app_data['np_systems']
+    gene_info = app_data['gene_info']
+    cluster_expression = app_data['cluster_expression']
+    cluster_np_expression = app_data['cluster_np_expression']
+    region_boundaries = app_data['region_boundaries']
+    region_centroids = app_data['region_centroids']
+    region_colors = app_data['region_colors']
+    region_descriptions = app_data['region_descriptions']
 
     @app.callback(
-        Output('cell-type-slider-container', 'style'),
-        [Input('color-by-radio', 'value')]
+        [
+            Output('cluster-controls', 'style'),
+            Output('nt-controls', 'style'),
+            Output('np-controls', 'style'),
+        ],
+        Input('viz-mode', 'value'),
     )
-    def toggle_cell_type_slider(color_by):
-        if color_by == 'cell_type':
+    def toggle_controls(mode):
+        """Show/hide mode-specific controls."""
+        cluster_style = {'display': 'block'} if mode == 'cluster' else {'display': 'none'}
+        nt_style = {'display': 'block'} if mode == 'nt' else {'display': 'none'}
+        np_style = {'display': 'block'} if mode == 'np' else {'display': 'none'}
+        return cluster_style, nt_style, np_style
+
+    @app.callback(
+        Output('diffusion-range-container', 'style'),
+        Input('diffusion-filter-enabled', 'value'),
+    )
+    def toggle_diffusion_slider(enabled):
+        """Show/hide diffusion range slider based on checkbox."""
+        if 'enabled' in (enabled or []):
             return {'display': 'block'}
         return {'display': 'none'}
 
     @app.callback(
-        Output('gene-selector-container', 'style'),
-        [Input('color-by-radio', 'value')]
+        Output('slice-grid', 'figure'),
+        [
+            Input('viz-mode', 'value'),
+            Input('cluster-level', 'value'),
+            Input('nt-system', 'value'),
+            Input('np-system', 'value'),
+            Input('expression-threshold', 'value'),
+            Input('display-options', 'value'),
+            Input('point-size', 'value'),
+            Input('subsample-pct', 'value'),
+            Input('diffusion-filter-enabled', 'value'),
+            Input('diffusion-range', 'value'),
+        ],
     )
-    def toggle_gene_selector(color_by):
-        if color_by == 'gene':
-            return {'display': 'block'}
-        return {'display': 'none'}
+    def update_slices(mode, cluster_level, nt_system, np_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range):
+        """Update the slice grid visualization."""
+        return create_slice_figure(
+            cells_df=cells_df,
+            slices=slices,
+            mode=mode,
+            cluster_level=cluster_level,
+            nt_system=nt_system,
+            np_system=np_system,
+            threshold=threshold,
+            display_options=display_options or [],
+            point_size=point_size,
+            subsample_pct=subsample_pct or 30,
+            diffusion_enabled=diffusion_enabled,
+            diffusion_range=diffusion_range or 0.5,
+            nt_mapping=nt_mapping,
+            np_systems=np_systems,
+            cluster_expression=cluster_expression,
+            cluster_np_expression=cluster_np_expression,
+            region_boundaries=region_boundaries,
+            region_centroids=region_centroids,
+            region_colors=region_colors,
+        )
 
     @app.callback(
-        Output('ligand-selector-container', 'style'),
-        [Input('color-by-radio', 'value')]
+        Output('cell-details', 'children'),
+        Input('slice-grid', 'clickData'),
     )
-    def toggle_ligand_selector(color_by):
-        if color_by == 'signaling':
-            return {'display': 'block'}
-        return {'display': 'none'}
-
-    # Callback to expand/collapse gene descriptions
-    @app.callback(
-        [Output({'type': 'gene-desc-full', 'gene': MATCH}, 'is_open'),
-         Output({'type': 'gene-desc-short', 'gene': MATCH}, 'style')],
-        [Input({'type': 'gene-desc-container', 'gene': MATCH}, 'n_clicks')],
-        [State({'type': 'gene-desc-full', 'gene': MATCH}, 'is_open')],
-        prevent_initial_call=True
-    )
-    def toggle_gene_description(n_clicks, is_open):
-        if n_clicks:
-            new_is_open = not is_open
-            # Hide truncated text when expanded
-            style = {'display': 'none'} if new_is_open else {'cursor': 'pointer'}
-            return new_is_open, style
-        return is_open, {'cursor': 'pointer'}
-
-    # Callback to toggle controls panel collapse
-    @app.callback(
-        [Output('controls-collapse', 'is_open'),
-         Output('collapse-controls-btn', 'children'),
-         Output('controls-col', 'width'),
-         Output('viz-col', 'width')],
-        [Input('collapse-controls-btn', 'n_clicks')],
-        [State('controls-collapse', 'is_open')]
-    )
-    def toggle_controls_collapse(n_clicks, is_open):
-        if n_clicks:
-            new_is_open = not is_open
-        else:
-            new_is_open = is_open
-
-        if new_is_open:
-            # Expanded: controls gets 2 cols, viz gets 7
-            return new_is_open, "◀", 2, 7
-        else:
-            # Collapsed: controls gets 1 col (just button), viz gets 8
-            return new_is_open, "▶", 1, 8
-
-
-def get_cell_type_display_name(col_name):
-    """Convert column name to display name.
-
-    Handles both HypoMap style ('C66_named' -> '66 types')
-    and ABC style ('subclass' -> 'Subclass').
-    """
-    if col_name and '_named' in col_name:
-        num = col_name.split('_')[0][1:]
-        return f"{num} types"
-    # ABC-style: capitalize
-    if col_name in ['class', 'subclass', 'supertype', 'cluster']:
-        return col_name.capitalize()
-    return col_name
-
-
-def create_empty_figure(message="No data"):
-    """Create an empty placeholder figure."""
-    fig = go.Figure()
-    fig.update_layout(
-        xaxis={'visible': False},
-        yaxis={'visible': False},
-        annotations=[{
-            'text': message,
-            'xref': 'paper',
-            'yref': 'paper',
-            'x': 0.5,
-            'y': 0.5,
-            'showarrow': False,
-            'font': {'size': 12, 'color': 'gray'}
-        }],
-        margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
-    return fig
+    def update_details(click_data):
+        """Update cell details on click."""
+        return create_cell_details(
+            click_data,
+            cells_df,
+            nt_mapping,
+            cluster_expression,
+            region_descriptions,
+            gene_info,
+        )
