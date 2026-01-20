@@ -5,8 +5,6 @@ Interactive 3D visualization of the human and mouse hypothalamus single-cell atl
 ## Overview
 
 This application visualizes spatial transcriptomics data from:
-- **Human HypoMap**: 87,353 Visium spots from 9 tissue sections (Tadross et al. 2025, Nature)
-- **Mouse HypoMap**: Cells mapped to Allen CCF coordinates (Steuernagel et al. 2022)
 - **Mouse ABC**: Allen Brain Cell Census MERFISH hypothalamus data (~133k cells)
 
 ## Installation
@@ -19,26 +17,6 @@ cd hypomap
 # Install dependencies with uv
 uv sync
 ```
-
-## Data Setup
-
-### Required Raw Data
-
-Download the following files to `data/raw/`:
-
-**Human Hypothalamus** (`data/raw/human_hypomap/`):
-- `480e89e7-84ad-4fa8-adc3-f7c562a77a78.h5ad` - snRNA-seq data from [CZ CELLxGENE](https://cellxgene.cziscience.com/collections/d0941303-7ce3-4422-9249-cf31eb98c480)
-- `GSE278848_tissue_positions_lists.tar.gz` - Visium spatial positions from [GEO](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE278848)
-- `visium_h5/*.h5` - Visium gene expression matrices from GEO
-
-**Mouse Hypothalamus** (`data/raw/mouse_hypomap/`):
-- `d3be7423-d664-4913-89a9-a506cae4c28f.h5ad` - Mouse HypoMap from CZ CELLxGENE
-- `hypothalamus_connectivity.csv` - Intra-hypothalamic connectivity from Allen Mouse Brain Connectivity Atlas ([Oh et al. 2014](https://www.nature.com/articles/nature13186))
-- `hypothalamus_structures.csv` - Allen CCF structure IDs for hypothalamic regions
-
-**Curated Data** (`data/generated/mouse_common/`):
-- `np_map.csv` - Curated neuropeptide ligand-receptor pairs with hypothalamic nuclei annotations
-
 ### Preprocessing
 
 Use Snakemake to run the preprocessing pipeline:
@@ -48,18 +26,11 @@ Use Snakemake to run the preprocessing pipeline:
 snakemake --cores 1
 
 # Or process individual datasets
-snakemake mouse_hypomap --cores 1   # Mouse HypoMap (CCF coordinates)
-snakemake human_hypomap --cores 1   # Human HypoMap (Visium spatial)
 snakemake mouse_abc --cores 1       # Mouse ABC Atlas (MERFISH)
 
 # Dry run to see what will be executed
 snakemake -n
 ```
-
-This creates processed files in `data/processed/`:
-- `mouse_hypomap/cells_with_coords.parquet` - Mouse cells with CCF coordinates
-- `human_hypomap/cells_with_coords.parquet` - Human Visium spots with spatial coordinates
-- `mouse_abc/cell_metadata.parquet` - Mouse ABC hypothalamus cells (MERFISH)
 
 ## Running the App
 

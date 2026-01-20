@@ -1,0 +1,51 @@
+experiment_id,injection_acronym,injection_name,injection_structure_id
+113553300,LPO,Lateral preoptic area,226
+120281646,CEA,Central amygdalar nucleus,536
+126709328,IRN,Intermediate reticular nucleus,136
+127255254,ACB,Nucleus accumbens,56
+146859480,MOB,Main olfactory bulb,507
+147135812,TRN,Tegmental reticular nucleus,574
+147633885,PRNc,"Pontine reticular nucleus, caudal part",1093
+156255078,CUL,Culmen,928
+167201465,AN,Ansiform lobule,1017
+168004394,MD,Mediodorsal nucleus of thalamus,362
+168663472,ZI,Zona incerta,797
+180522266,MRN,Midbrain reticular nucleus,128
+182144176,PAG,Periaqueductal gray,795
+182805258,SGN,Suprageniculate nucleus,325
+183011353,PO,Posterior complex of the thalamus,1020
+187268452,CLA,Claustrum,583
+263106036,PL,Prelimbic area,972
+263784128,DMX,Dorsal motor nucleus of the vagus nerve,839
+265648940,CEA,Central amygdalar nucleus,536
+265712971,ACAv,"Anterior cingulate area, ventral part",48
+265945645,CEA,Central amygdalar nucleus,536
+266489212,VMH,Ventromedial hypothalamic nucleus,693
+266501422,MRN,Midbrain reticular nucleus,128
+266815477,ENTm,"Entorhinal area, medial part, dorsal zone",926
+266816894,PL,Prelimbic area,972
+267494468,MD,Mediodorsal nucleus of thalamus,362
+267811103,SIM,Simple lobule,1007
+268042502,SSs,Supplemental somatosensory area,378
+272404772,CA3,Field CA3,463
+272414403,ENTl,"Entorhinal area, lateral part",918
+278511717,SCm,"Superior colliculus, motor related",294
+287246555,MPN,Medial preoptic nucleus,515
+292959343,CP,Caudoputamen,672
+293008559,ACB,Nucleus accumbens,56
+296047806,AId,"Agranular insular area, dorsal part",104
+296049924,MOs,Secondary motor area,993
+298759552,VISp,Primary visual area,385
+300923916,PVHd,"Paraventricular hypothalamic nucleus, descending division",63
+301618828,CA3,Field CA3,463
+303708513,VMH,Ventromedial hypothalamic nucleus,693
+304762965,VISp,Primary visual area,385
+304996627,DN,Dentate nucleus,846
+304997333,FL,Flocculus,1049
+305235787,APN,Anterior pretectal nucleus,215
+305380411,CA1,Field CA1,382
+515198413,AHN,Anterior hypothalamic nucleus,88
+540685246,PVH,Paraventricular hypothalamic nucleus,38
+558697990,MD,Mediodorsal nucleus of thalamus,362
+581642026,NTS,Nucleus of the solitary tract,651
+642180077,LGd,Dorsal part of the lateral geniculate complex,170

@@ -40,9 +40,6 @@ uv run snakemake -n
 
 # Run full pipeline
 uv run snakemake --cores 1
-
-# Run specific target
-uv run snakemake data/processed/mouse/cells_with_coords.parquet
 ```
 
 If you add a new preprocessing step, add a corresponding rule to the Snakefile with proper input/output declarations.

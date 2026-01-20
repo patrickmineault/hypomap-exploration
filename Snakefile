@@ -13,7 +13,6 @@
 rule all:
     input:
         "data/processed/mouse_abc/cells_with_coords.parquet",
-        "data/processed/mouse_common/gene_descriptions.csv",
         "data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet",
         "data/processed/mouse_abc/cluster_np_expression.parquet",
         "data/processed/mouse_abc/coronal_atlas_regions.json",
@@ -87,11 +86,6 @@ rule mouse_abc:
     """Process mouse ABC dataset only."""
     input:
         "data/processed/mouse_abc/cells_with_coords.parquet"
-
-rule gene_descriptions:
-    """Build gene descriptions from cluster names."""
-    input:
-        "data/processed/mouse_common/gene_descriptions.csv"
 
 rule ligand_receptor_map:
     """Build cluster ligand-receptor expression profiles."""
