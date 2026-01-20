@@ -1,0 +1,6 @@
+system,ligand_status,receptor_status,reason
+Apela/ELABELA,low_expression,all_missing,"ligand:low_expression, receptor:all_missing"
+INSL5,all_missing,all_missing,"ligand:all_missing, receptor:all_missing"
+Kisspeptin,low_expression,all_missing,"ligand:low_expression, receptor:all_missing"
+Urotensin 2,all_missing,all_missing,"ligand:all_missing, receptor:all_missing"
+Urotensin 2B,low_expression,all_missing,"ligand:low_expression, receptor:all_missing"

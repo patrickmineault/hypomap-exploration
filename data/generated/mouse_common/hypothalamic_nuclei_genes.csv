@@ -1,0 +1,51 @@
+area,area_full_name,type,gene,protein,function
+PVH,Paraventricular Nucleus,ligand,Crh,Corticotropin-releasing hormone,Master regulator of stress response (HPA axis)
+PVH,Paraventricular Nucleus,ligand,Oxt,Oxytocin,Lactation; parturition; social bonding
+PVH,Paraventricular Nucleus,ligand,Avp,Arginine vasopressin,Fluid balance; blood pressure; stress co-activator
+PVH,Paraventricular Nucleus,ligand,Trh,Thyrotropin-releasing hormone,Thyroid axis control (metabolism)
+PVH,Paraventricular Nucleus,ligand,Sst,Somatostatin,Inhibits growth hormone release
+PVH,Paraventricular Nucleus,receptor,Mc4r,Melanocortin 4 receptor,Appetite suppression; α-MSH target
+PVH,Paraventricular Nucleus,receptor,Nr3c1,Glucocorticoid receptor,Cortisol negative feedback on HPA axis
+PVH,Paraventricular Nucleus,receptor,Gabra1/Gabrb2/Gabrg2,GABA-A receptor subunits,Tonic inhibition of stress neurons
+PVH,Paraventricular Nucleus,receptor,Avpr1b,Vasopressin receptor 1B,Synergizes with CRH for ACTH release
+PVH,Paraventricular Nucleus,receptor,Lepr,Leptin receptor,Direct metabolic sensing
+ARH,Arcuate Nucleus,ligand,Pomc,Pro-opiomelanocortin (→ α-MSH),Anorexigenic; suppresses appetite
+ARH,Arcuate Nucleus,ligand,Agrp,Agouti-related peptide,Orexigenic; MC4R inverse agonist
+ARH,Arcuate Nucleus,ligand,Npy,Neuropeptide Y,Orexigenic; co-expressed with AgRP
+ARH,Arcuate Nucleus,ligand,Kiss1,Kisspeptin,Master regulator of GnRH/reproduction
+ARH,Arcuate Nucleus,ligand,Ghrh,Growth hormone-releasing hormone,Stimulates GH release from pituitary
+ARH,Arcuate Nucleus,receptor,Lepr,Leptin receptor,Adiposity signal; activates POMC; inhibits AgRP
+ARH,Arcuate Nucleus,receptor,Ghsr,Ghrelin receptor (GHS-R1a),Hunger signal; activates AgRP/NPY neurons
+ARH,Arcuate Nucleus,receptor,Insr,Insulin receptor,Metabolic sensing; anorexigenic
+ARH,Arcuate Nucleus,receptor,Mc3r,Melanocortin 3 receptor,Autoreceptor on POMC/AgRP neurons
+ARH,Arcuate Nucleus,receptor,Esr1,Estrogen receptor α,Regulates Kiss1 neurons; reproduction
+SCH,Suprachiasmatic Nucleus,ligand,Vip,Vasoactive intestinal peptide,Synchronizes SCH neuronal network
+SCH,Suprachiasmatic Nucleus,ligand,Avp,Arginine vasopressin,Major rhythmic output signal
+SCH,Suprachiasmatic Nucleus,ligand,Prok2,Prokineticin 2,Circadian output to target brain regions
+SCH,Suprachiasmatic Nucleus,ligand,Grp,Gastrin-releasing peptide,Photic signaling/light response
+SCH,Suprachiasmatic Nucleus,ligand,Nms,Neuromedin S,Circadian rhythm regulation
+SCH,Suprachiasmatic Nucleus,receptor,Vipr2,VPAC2 receptor,VIP receptor; essential for SCH coupling
+SCH,Suprachiasmatic Nucleus,receptor,Adcyap1r1,PAC1 receptor,Receives PACAP from retinal input
+SCH,Suprachiasmatic Nucleus,receptor,Mtnr1a,Melatonin receptor 1 (MT1),Feedback from pineal gland
+SCH,Suprachiasmatic Nucleus,receptor,Grin1/Grin2b,NMDA receptor subunits,Glutamate input from retinohypothalamic tract
+SCH,Suprachiasmatic Nucleus,receptor,Gabra1/Gabrb2/Gabrg2,GABA-A receptor subunits,Intranuclear communication
+LHA,Lateral Hypothalamic Area,ligand,Hcrt,Orexin/Hypocretin,Arousal; wakefulness; feeding drive
+LHA,Lateral Hypothalamic Area,ligand,Pmch,Melanin-concentrating hormone,Orexigenic; promotes sleep
+LHA,Lateral Hypothalamic Area,ligand,Nts,Neurotensin,Reward; feeding suppression (subset)
+LHA,Lateral Hypothalamic Area,ligand,Gal,Galanin,Feeding; particularly fat intake
+LHA,Lateral Hypothalamic Area,ligand,Cartpt,CART peptide,Anorexigenic; co-expressed in some neurons
+LHA,Lateral Hypothalamic Area,receptor,Lepr,Leptin receptor,Metabolic sensing; inhibits orexin neurons
+LHA,Lateral Hypothalamic Area,receptor,Ghsr,Ghrelin receptor,Activates orexin neurons; hunger signal
+LHA,Lateral Hypothalamic Area,receptor,Mc4r,Melanocortin 4 receptor,Receives α-MSH input from ARH
+LHA,Lateral Hypothalamic Area,receptor,Npy1r/Npy5r,NPY Y1/Y5 receptors,Receives orexigenic input from ARH
+LHA,Lateral Hypothalamic Area,receptor,Cnr1,Cannabinoid CB1 receptor,Feeding and reward modulation
+DMH,Dorsomedial Hypothalamus,ligand,Npy,Neuropeptide Y,Feeding; circadian relay
+DMH,Dorsomedial Hypothalamus,ligand,Gal,Galanin,Innervates PVN TRH neurons; feeding
+DMH,Dorsomedial Hypothalamus,ligand,Bdnf,Brain-derived neurotrophic factor,Energy homeostasis; thermogenesis
+DMH,Dorsomedial Hypothalamus,ligand,Cartpt,CART peptide,Anorexigenic signaling
+DMH,Dorsomedial Hypothalamus,ligand,Adcyap1,PACAP,Stress; thermogenesis; circadian relay
+DMH,Dorsomedial Hypothalamus,receptor,Lepr,Leptin receptor,Thermogenesis; BAT activation via SNS
+DMH,Dorsomedial Hypothalamus,receptor,Mc4r,Melanocortin 4 receptor,Receives α-MSH; energy expenditure
+DMH,Dorsomedial Hypothalamus,receptor,Prokr2,Prokineticin 2 receptor,Receives circadian signal from SCH
+DMH,Dorsomedial Hypothalamus,receptor,Gabra1/Gabrb2/Gabrg2,GABA-A receptor subunits,Inhibitory input from SCH (circadian gating)
+DMH,Dorsomedial Hypothalamus,receptor,Npy1r,NPY Y1 receptor,Feeding regulation

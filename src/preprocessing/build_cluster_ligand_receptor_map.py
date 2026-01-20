@@ -12,15 +12,16 @@ Usage:
 """
 
 import argparse
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 # Paths
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 CACHE_DIR = DATA_DIR / "raw" / "abc_atlas_cache"
 OUTPUT_DIR = DATA_DIR / "processed" / "mouse_abc"
-LR_PATH = DATA_DIR / "processed" / "mouse_common" / "ligand_receptor_mouse.csv"
+NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
 
 # Imputed data paths (external drive for large files)
 IMPUTED_CACHE_DIR = Path("/Volumes/ExtDrive/mouse_abc_data")
@@ -28,31 +29,47 @@ IMPUTED_DIRECTORY = "MERFISH-C57BL6J-638850-imputed"
 IMPUTED_EXPR_FILE = "C57BL6J-638850-imputed/log2"
 
 # Expression threshold for "expressing" (log2 scale)
-EXPRESSION_THRESHOLD = 0.5
+# Similar to the the Allen Brain Atlas MERFISH documentation
+EXPRESSION_THRESHOLD = 3.0
 
 
 def get_neuropeptide_genes() -> tuple[list[str], set[str], set[str]]:
-    """Load neuropeptide ligand and receptor genes from CSV.
+    """Load neuropeptide ligand/receptor genes from curated np_map.csv.
+
+    Handles semicolon-separated gene names (e.g., "Calcrl;Ramp2" for heterodimer
+    receptors) by splitting them into individual genes for expression lookup.
 
     Returns:
         Tuple of (all_genes list, ligand_genes set, receptor_genes set)
     """
-    lr_df = pd.read_csv(LR_PATH)
+    np_map = pd.read_csv(NP_MAP_PATH)
 
-    # Filter to neuropeptides only (skip neurotransmitters, gap junctions, etc.)
-    np_df = lr_df[lr_df['ligand_type'] == 'Neuropeptide']
+    # Get unique ligand genes (split semicolons for any multi-gene ligands)
+    ligand_genes = set()
+    for lg in np_map["Ligand_Gene"].dropna().unique():
+        for g in lg.split(";"):
+            ligand_genes.add(g.strip())
 
-    ligand_genes = set(np_df['gene_ligand'].unique())
-    receptor_genes = set(np_df['gene_receptor'].unique())
+    # Get unique receptor genes (split semicolons for heterodimer receptors)
+    # e.g., "Calcrl;Ramp2" -> ["Calcrl", "Ramp2"]
+    receptor_genes = set()
+    for rg in np_map["Receptor_Gene"].dropna().unique():
+        for g in rg.split(";"):
+            receptor_genes.add(g.strip())
+
     all_genes = sorted(ligand_genes | receptor_genes)
+
+    # Report what we're including
+    print(f"  Loaded {len(np_map)} ligand-receptor pairs from np_map.csv")
+    for lclass in np_map["Ligand_Class"].unique():
+        n = len(np_map[np_map["Ligand_Class"] == lclass])
+        print(f"  {lclass}: {n} interactions")
 
     return all_genes, ligand_genes, receptor_genes
 
 
 def fetch_expression_data(
-    cells: pd.DataFrame,
-    genes: list[str],
-    use_imputed: bool = False
+    cells: pd.DataFrame, genes: list[str], use_imputed: bool = False
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Fetch expression data from ABC Atlas for specified genes.
 
@@ -64,8 +81,8 @@ def fetch_expression_data(
     Returns:
         Tuple of (expression DataFrame, genes_found, genes_missing)
     """
-    from abc_atlas_access.abc_atlas_cache.abc_project_cache import AbcProjectCache
     import anndata
+    from abc_atlas_access.abc_atlas_cache.abc_project_cache import AbcProjectCache
 
     if use_imputed:
         # Use imputed dataset from external drive
@@ -88,16 +105,13 @@ def fetch_expression_data(
     # Get path to expression file (will download if not present)
     print(f"Getting expression file: {directory}/{expr_file}")
     print("This may take a while if downloading (~50GB for imputed data)...")
-    expr_path = cache.get_file_path(
-        directory=directory,
-        file_name=expr_file
-    )
+    expr_path = cache.get_file_path(directory=directory, file_name=expr_file)
 
     print(f"Loading expression data from {expr_path}")
-    adata = anndata.read_h5ad(expr_path, backed='r')
+    adata = anndata.read_h5ad(expr_path, backed="r")
 
     # Check which genes are available
-    measured_genes = set(adata.var['gene_symbol'].tolist())
+    measured_genes = set(adata.var["gene_symbol"].tolist())
     genes_found = [g for g in genes if g in measured_genes]
     genes_missing = [g for g in genes if g not in measured_genes]
 
@@ -105,13 +119,15 @@ def fetch_expression_data(
     print(f"Genes available: {len(genes_found)}")
     if genes_missing:
         print(f"Genes missing: {len(genes_missing)}")
-        print(f"  Missing: {genes_missing[:10]}{'...' if len(genes_missing) > 10 else ''}")
+        print(
+            f"  Missing: {genes_missing[:10]}{'...' if len(genes_missing) > 10 else ''}"
+        )
 
     if not genes_found:
         raise ValueError("No requested genes found in expression data!")
 
     # Create gene mask
-    gene_mask = adata.var['gene_symbol'].isin(genes_found)
+    gene_mask = adata.var["gene_symbol"].isin(genes_found)
     gene_indices = np.where(gene_mask)[0]
 
     # Filter to hypothalamus cells
@@ -119,7 +135,9 @@ def fetch_expression_data(
     cell_mask = pd.Series(adata.obs.index).isin(hy_cell_ids)
     cell_indices = np.where(cell_mask)[0]
 
-    print(f"Extracting expression for {len(genes_found)} genes across {len(cell_indices)} cells...")
+    print(
+        f"Extracting expression for {len(genes_found)} genes across {len(cell_indices)} cells..."
+    )
 
     # Extract expression data in chunks to avoid memory issues
     chunk_size = 50000
@@ -133,7 +151,7 @@ def fetch_expression_data(
         # Get chunk of expression data
         chunk = adata.X[chunk_idx, :][:, gene_indices]
         # Handle both sparse and dense arrays
-        if hasattr(chunk, 'toarray'):
+        if hasattr(chunk, "toarray"):
             chunk = chunk.toarray()
         expr_data.append(chunk)
         cell_ids.extend(adata.obs.index[chunk_idx].tolist())
@@ -145,7 +163,7 @@ def fetch_expression_data(
 
     # Combine into DataFrame
     expr_matrix = np.vstack(expr_data)
-    gene_names = adata.var.loc[gene_mask, 'gene_symbol'].tolist()
+    gene_names = adata.var.loc[gene_mask, "gene_symbol"].tolist()
     expr_df = pd.DataFrame(expr_matrix, index=cell_ids, columns=gene_names)
 
     return expr_df, genes_found, genes_missing
@@ -156,7 +174,7 @@ def aggregate_by_cluster(
     expr_df: pd.DataFrame,
     genes: list[str],
     ligand_genes: set[str],
-    receptor_genes: set[str]
+    receptor_genes: set[str],
 ) -> pd.DataFrame:
     """Aggregate expression statistics by cluster.
 
@@ -173,18 +191,18 @@ def aggregate_by_cluster(
     print("Aggregating expression by cluster...")
 
     # Join cluster info with expression
-    cluster_col = cells[['cluster']].copy()
-    cells_with_expr = cluster_col.join(expr_df, how='inner')
+    cluster_col = cells[["cluster"]].copy()
+    cells_with_expr = cluster_col.join(expr_df, how="inner")
 
     # Compute stats per cluster
     cluster_stats = []
-    clusters = cells_with_expr['cluster'].unique()
+    clusters = cells_with_expr["cluster"].unique()
 
     for i, cluster in enumerate(clusters):
         if (i + 1) % 500 == 0:
             print(f"  Processed {i+1}/{len(clusters)} clusters...")
 
-        grp = cells_with_expr[cells_with_expr['cluster'] == cluster]
+        grp = cells_with_expr[cells_with_expr["cluster"] == cluster]
         n_cells = len(grp)
 
         for gene in genes:
@@ -195,18 +213,20 @@ def aggregate_by_cluster(
             if len(vals) == 0:
                 continue
 
-            cluster_stats.append({
-                'cluster': cluster,
-                'gene': gene,
-                'mean_expr': vals.mean(),
-                'median_expr': vals.median(),
-                'max_expr': vals.max(),
-                'pct_expressing': (vals > EXPRESSION_THRESHOLD).mean() * 100,
-                'n_cells': n_cells,
-                'n_expressing': (vals > EXPRESSION_THRESHOLD).sum(),
-                'is_ligand': gene in ligand_genes,
-                'is_receptor': gene in receptor_genes,
-            })
+            cluster_stats.append(
+                {
+                    "cluster": cluster,
+                    "gene": gene,
+                    "mean_expr": vals.mean(),
+                    "median_expr": vals.median(),
+                    "max_expr": vals.max(),
+                    "pct_expressing": (vals > EXPRESSION_THRESHOLD).mean() * 100,
+                    "n_cells": n_cells,
+                    "n_expressing": (vals > EXPRESSION_THRESHOLD).sum(),
+                    "is_ligand": gene in ligand_genes,
+                    "is_receptor": gene in receptor_genes,
+                }
+            )
 
     return pd.DataFrame(cluster_stats)
 
@@ -219,7 +239,7 @@ def parse_args():
     parser.add_argument(
         "--use-imputed",
         action="store_true",
-        help="Use imputed expression data (all genes, ~50GB download to external drive)"
+        help="Use imputed expression data (all genes, ~50GB download to external drive)",
     )
     return parser.parse_args()
 
@@ -248,7 +268,7 @@ def main():
     # 2. Load cell metadata
     print("\nLoading hypothalamus cell metadata...")
     cells = pd.read_parquet(OUTPUT_DIR / "cell_metadata.parquet")
-    cells = cells.set_index('cell_id') if 'cell_id' in cells.columns else cells
+    cells = cells.set_index("cell_id") if "cell_id" in cells.columns else cells
     print(f"  Cells: {len(cells)}")
     print(f"  Clusters: {cells['cluster'].nunique()}")
 
@@ -267,14 +287,18 @@ def main():
     # Save list of missing genes for reference
     if genes_missing:
         missing_path = OUTPUT_DIR / "neuropeptide_genes_missing.txt"
-        with open(missing_path, 'w') as f:
-            f.write("# Neuropeptide genes not in MERFISH panel (would need imputed data)\n")
+        with open(missing_path, "w") as f:
+            f.write(
+                "# Neuropeptide genes not in MERFISH panel (would need imputed data)\n"
+            )
             for g in sorted(genes_missing):
                 f.write(f"{g}\n")
         print(f"  Missing genes saved to {missing_path}")
 
     # 5. Aggregate by cluster (only for genes we have)
-    cluster_df = aggregate_by_cluster(cells, expr_df, genes_found, ligand_genes, receptor_genes)
+    cluster_df = aggregate_by_cluster(
+        cells, expr_df, genes_found, ligand_genes, receptor_genes
+    )
 
     # 6. Save cluster profiles
     profile_path = OUTPUT_DIR / "cluster_ligand_receptor_profile.parquet"
@@ -284,21 +308,25 @@ def main():
 
     # 7. Summary stats
     print("\n=== Summary ===")
-    expressing_clusters = cluster_df[cluster_df['pct_expressing'] > 10]
+    expressing_clusters = cluster_df[cluster_df["pct_expressing"] > 10]
     print(f"Cluster-gene pairs with >10% expressing: {len(expressing_clusters)}")
 
     # Top ligand-expressing clusters
-    top_ligands = (cluster_df[cluster_df['is_ligand']]
-                   .groupby('gene')
-                   .apply(lambda x: x.nlargest(3, 'pct_expressing')[['cluster', 'pct_expressing']])
-                   .reset_index(level=0))
+    top_ligands = (
+        cluster_df[cluster_df["is_ligand"]]
+        .groupby("gene")
+        .apply(lambda x: x.nlargest(3, "pct_expressing")[["cluster", "pct_expressing"]])
+        .reset_index(level=0)
+    )
 
     print("\nTop clusters per ligand (sample):")
     for gene in list(ligand_genes)[:5]:
-        gene_data = top_ligands[top_ligands['gene'] == gene]
+        gene_data = top_ligands[top_ligands["gene"] == gene]
         if len(gene_data) > 0:
             top = gene_data.iloc[0]
-            print(f"  {gene}: {top['cluster'][:50]}... ({top['pct_expressing']:.1f}% expressing)")
+            print(
+                f"  {gene}: {top['cluster'][:50]}... ({top['pct_expressing']:.1f}% expressing)"
+            )
 
 
 if __name__ == "__main__":
