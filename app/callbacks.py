@@ -480,7 +480,11 @@ def create_slice_figure(
     y_pad = (y_max - y_min) * 0.05
     y_range_final = [y_max + y_pad, y_min - y_pad]
 
-    # Update all axes - link them together with matches and equal scaling
+    # Update all axes - link them together with matches
+    # NOTE: We do NOT use scaleanchor/scaleratio here because it causes vertical
+    # stretching with scattergl in 1-column mode. Instead, the figure height is
+    # computed from the data aspect ratio (see subplot_height calculation in callers)
+    # so that subplot pixel dimensions naturally preserve 1:1 data scaling.
     for i in range(1, n_rows * n_cols + 1):
         row_i = (i - 1) // n_cols + 1
         col_i = (i - 1) % n_cols + 1
@@ -491,7 +495,6 @@ def create_slice_figure(
             zeroline=False,
             matches='x',
             range=x_range_final,
-            constrain='domain',
             row=row_i,
             col=col_i,
         )
@@ -500,9 +503,6 @@ def create_slice_figure(
             showgrid=False,
             zeroline=False,
             matches='y',
-            scaleanchor='x',
-            scaleratio=1,
-            constraintoward='top',
             range=y_range_final,
             row=row_i,
             col=col_i,
