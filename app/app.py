@@ -474,6 +474,8 @@ def create_app():
     )
 
     # Set layout
+    default_n_cells = len(default_data['cells_df'])
+    default_subsample = max(5, min(30, int(60000 / default_n_cells * 100)))
     app.layout = create_layout(
         cell_type_levels=cell_type_levels,
         nt_types=nt_types,
@@ -486,6 +488,7 @@ def create_app():
         dataset_names=dataset_names,
         default_dataset=default_dataset,
         default_slices=default_data['slices'],
+        default_subsample=default_subsample,
     )
 
     # Register callbacks

@@ -7,11 +7,49 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 
-def create_left_panel(cell_type_levels, nt_types, np_system_names):
+DATASET_LABELS = {
+    'mouse_abc': 'Hypothalamus',
+    'mouse_abc_subcortical': 'Subcortical',
+}
+
+
+def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names=None, region_list=None, region_descriptions=None, enable_region_highlight=False, dataset_names=None, default_dataset='mouse_abc', default_subsample=30):
     """Create the left control panel."""
+    hormone_names = hormone_names or []
+    region_list = region_list or []
+    region_descriptions = region_descriptions or {}
+    dataset_names = dataset_names or ['mouse_abc']
+
     return dbc.Card([
         dbc.CardHeader(html.H5("Controls", className="mb-0")),
         dbc.CardBody([
+            # Dataset selector (only show if multiple datasets available)
+            *([
+                html.Div([
+                    html.Label("Dataset", className="control-label"),
+                    dcc.RadioItems(
+                        id='dataset-radio',
+                        options=[
+                            {'label': f' {DATASET_LABELS.get(name, name)}', 'value': name}
+                            for name in dataset_names
+                        ],
+                        value=default_dataset,
+                        labelStyle={'display': 'block', 'marginBottom': '6px', 'fontSize': '0.9rem'},
+                        inputStyle={'marginRight': '10px'},
+                    ),
+                ], className="mb-4"),
+                html.Hr(style={'borderColor': 'rgba(0,0,0,0.08)'}),
+            ] if len(dataset_names) > 1 else []),
+            # Always include a hidden radio for callback compatibility when single dataset
+            *([
+                dcc.RadioItems(
+                    id='dataset-radio',
+                    options=[{'label': default_dataset, 'value': default_dataset}],
+                    value=default_dataset,
+                    style={'display': 'none'},
+                ),
+            ] if len(dataset_names) <= 1 else []),
+
             # Mode selector
             html.Div([
                 html.Label("Visualization Mode", className="control-label"),
@@ -20,6 +58,7 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                     options=[
                         {'label': ' Neuropeptide System', 'value': 'np'},
                         {'label': ' Neurotransmitter System', 'value': 'nt'},
+                    ] + ([{'label': ' Hormone Receptor', 'value': 'hormone'}] if hormone_names else []) + [
                         {'label': ' Cluster Granularity', 'value': 'cluster'},
                     ],
                     value='np',
@@ -62,6 +101,23 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                 style={'display': 'none'},
             ),
 
+            # Hormone mode controls (always include dropdown for callback compatibility)
+            html.Div(
+                id='hormone-controls',
+                children=[
+                    html.Label("Hormone System", className="control-label"),
+                    dcc.Dropdown(
+                        id='hormone-system',
+                        options=[{'label': name, 'value': name} for name in hormone_names] if hormone_names else [],
+                        value=hormone_names[0] if hormone_names else None,
+                        clearable=False,
+                        className="modern-dropdown",
+                    ),
+                ],
+                className="mb-4",
+                style={'display': 'none'},
+            ),
+
             # NP mode controls
             html.Div(
                 id='np-controls',
@@ -74,19 +130,8 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                         clearable=False,
                         className="modern-dropdown",
                     ),
-                    # Expression threshold slider (only in NP mode)
-                    html.Div([
-                        html.Label("Expression Threshold", className="control-label mt-3"),
-                        dcc.Slider(
-                            id='expression-threshold',
-                            min=0.5,
-                            max=5,
-                            step=0.5,
-                            value=3,
-                            marks={0.5: '0.5', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5'},
-                            tooltip={"placement": "bottom", "always_visible": False},
-                        ),
-                    ], className="mb-3"),
+                    # System info display
+                    html.Div(id='np-system-info', className="mt-2", style={'fontSize': '0.8rem', 'color': '#666'}),
                     # Diffusion range filter
                     html.Div([
                         dcc.Checklist(
@@ -111,6 +156,16 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                                 ),
                             ],
                             style={'display': 'none'},
+                        ),
+                    ], className="mt-3"),
+                    # Rainbow mode checkbox
+                    html.Div([
+                        dcc.Checklist(
+                            id='rainbow-mode',
+                            options=[{'label': ' Rainbow mode (fill by cluster)', 'value': 'enabled'}],
+                            value=[],
+                            inputStyle={'marginRight': '8px'},
+                            style={'fontSize': '0.85rem'},
                         ),
                     ], className="mt-3"),
                     # NP mode legend
@@ -140,6 +195,25 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                 style={'display': 'none'},
             ),
 
+            # Shared expression threshold slider (visible in NP and Hormone modes)
+            html.Div(
+                id='expression-threshold-container',
+                children=[
+                    html.Label("Expression Threshold", className="control-label"),
+                    dcc.Slider(
+                        id='expression-threshold',
+                        min=0.5,
+                        max=5,
+                        step=0.5,
+                        value=3,
+                        marks={0.5: '0.5', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5'},
+                        tooltip={"placement": "bottom", "always_visible": False},
+                    ),
+                ],
+                className="mb-4",
+                style={'display': 'none'},
+            ),
+
             # Display options
             html.Hr(style={'borderColor': 'rgba(0,0,0,0.08)'}),
             html.Div([
@@ -155,6 +229,41 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                     inputStyle={'marginRight': '10px'},
                 ),
             ], className="mb-4"),
+
+            # Region highlight selector (click to select)
+            *([
+                html.Hr(style={'borderColor': 'rgba(0,0,0,0.08)'}),
+                html.Div([
+                    html.Label("Highlight Region (click to select)", className="control-label"),
+                    html.Div(
+                        id='region-list',
+                        children=[
+                            html.Button(
+                                region,
+                                id={'type': 'region-btn', 'index': region},
+                                n_clicks=0,
+                                title=f"{region_descriptions.get(region, {}).get('full_name', region)}: {region_descriptions.get(region, {}).get('description', 'No description available')}",
+                                className='region-chip',
+                                style={
+                                    'display': 'inline-block',
+                                    'padding': '2px 6px',
+                                    'margin': '2px',
+                                    'fontSize': '0.75rem',
+                                    'borderRadius': '4px',
+                                    'backgroundColor': '#f0f0f0',
+                                    'border': '1px solid transparent',
+                                    'cursor': 'pointer',
+                                    'color': '#333',
+                                },
+                            )
+                            for region in region_list
+                        ],
+                        style={'maxHeight': '120px', 'overflowY': 'auto', 'lineHeight': '1.8'},
+                    ),
+                    # Store for currently selected region
+                    dcc.Store(id='selected-region', data=None),
+                ], className="mb-4"),
+            ] if enable_region_highlight else []),
 
             # Point size slider
             html.Div([
@@ -174,22 +283,66 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names):
                 html.Label("Subsample %", className="control-label"),
                 dcc.Slider(
                     id='subsample-pct',
-                    min=10,
+                    min=5,
                     max=100,
-                    step=10,
-                    value=30,
-                    marks={10: '10%', 50: '50%', 100: '100%'},
+                    step=5,
+                    value=default_subsample,
+                    marks={5: '5%', 25: '25%', 50: '50%', 100: '100%'},
                 ),
             ], className="mb-3"),
         ]),
     ], className="h-100 modern-card")
 
 
-def create_center_panel():
+def create_center_panel(default_slices=None):
     """Create the center visualization panel with coronal slice grid."""
+    default_slices = default_slices or []
+    z_min = min(default_slices) if default_slices else 0
+    z_max = max(default_slices) if default_slices else 10
+    # Build marks at actual slice positions, showing label for first, last, and every ~4th
+    z_marks = {}
+    for i, z in enumerate(default_slices):
+        if i == 0 or i == len(default_slices) - 1 or i % 4 == 0:
+            z_marks[z] = f'{z:.1f}'
+        else:
+            z_marks[z] = ''
+
     return dbc.Card([
         dbc.CardHeader([
-            html.H5("Coronal Slices", className="mb-0", style={'fontWeight': '600'}),
+            html.Div([
+                # Columns slider
+                html.Div([
+                    html.Label("Columns", style={'fontSize': '0.8rem', 'fontWeight': '600', 'marginRight': '8px', 'whiteSpace': 'nowrap'}),
+                    html.Div(
+                        dcc.Slider(
+                            id='grid-columns',
+                            min=1,
+                            max=3,
+                            step=1,
+                            value=2,
+                            marks={1: '1', 2: '2', 3: '3'},
+                        ),
+                        style={'flex': '1', 'minWidth': '80px'},
+                    ),
+                ], style={'display': 'flex', 'alignItems': 'center', 'flex': '1', 'marginRight': '24px'}),
+                # Z-range slider (snaps to actual slice positions)
+                html.Div([
+                    html.Span("P", style={'fontSize': '0.75rem', 'fontWeight': '600', 'color': '#888', 'marginRight': '6px'}),
+                    html.Div(
+                        dcc.RangeSlider(
+                            id='z-range',
+                            min=z_min,
+                            max=z_max,
+                            step=None,  # snap to marks only
+                            value=[z_min, z_max],
+                            marks=z_marks,
+                            tooltip={"placement": "bottom", "always_visible": True},
+                        ),
+                        style={'flex': '1', 'minWidth': '200px'},
+                    ),
+                    html.Span("A", style={'fontSize': '0.75rem', 'fontWeight': '600', 'color': '#888', 'marginLeft': '6px'}),
+                ], style={'display': 'flex', 'alignItems': 'center', 'flex': '3'}),
+            ], style={'display': 'flex', 'alignItems': 'center', 'width': '100%'}),
         ]),
         dbc.CardBody([
             dcc.Loading(
@@ -197,14 +350,19 @@ def create_center_panel():
                 type="circle",
                 color="#667eea",
                 children=[
-                    dcc.Graph(
-                        id='slice-grid',
-                        style={'height': '2400px'},
-                        config={
-                            'displayModeBar': True,
-                            'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
-                            'displaylogo': False,
-                        },
+                    html.Div(
+                        id='slice-grid-container',
+                        children=[
+                            dcc.Graph(
+                                id='slice-grid',
+                                config={
+                                    'displayModeBar': True,
+                                    'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+                                    'displaylogo': False,
+                                    'plotGlPixelRatio': 1,  # Avoid WebGL canvas size limit (16384px) on Retina
+                                },
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -212,21 +370,42 @@ def create_center_panel():
     ], className="h-100 modern-card")
 
 
-def create_right_panel():
+def create_right_panel(enable_quantile_toggle=False):
     """Create the right details panel."""
     return dbc.Card([
         dbc.CardHeader(html.H5("Cluster Details", className="mb-0", style={'fontWeight': '600'})),
-        dbc.CardBody(
-            id='cell-details',
-            children=[
-                html.P("Click on a cell to see details", className="text-muted",
-                       style={'fontStyle': 'italic'}),
-            ],
-        ),
+        dbc.CardBody([
+            # Expression mode toggle
+            *([
+                html.Div([
+                    html.Label("Expression metric:", style={'fontSize': '0.85rem', 'marginRight': '8px'}),
+                    dbc.Switch(
+                        id='expr-mode-toggle',
+                        label='',
+                        value=False,
+                        style={'display': 'inline-block'},
+                    ),
+                    html.Span(
+                        id='expr-mode-label',
+                        children="log₂(CPM)",
+                        style={'fontSize': '0.85rem', 'marginLeft': '4px'},
+                    ),
+                ], style={'marginBottom': '12px', 'display': 'flex', 'alignItems': 'center'}),
+                html.Hr(style={'marginTop': '0'}),
+            ] if enable_quantile_toggle else []),
+            # Dynamic cell details content
+            html.Div(
+                id='cell-details',
+                children=[
+                    html.P("Click on a cell to see details", className="text-muted",
+                           style={'fontStyle': 'italic'}),
+                ],
+            ),
+        ]),
     ], className="h-100 modern-card", style={'overflowY': 'auto'})
 
 
-def create_layout(cell_type_levels, nt_types, np_system_names):
+def create_layout(cell_type_levels, nt_types, np_system_names, hormone_names=None, region_list=None, region_descriptions=None, enable_region_highlight=False, enable_quantile_toggle=False, dataset_names=None, default_dataset='mouse_abc', default_slices=None, default_subsample=30):
     """Create the main application layout."""
     return dbc.Container([
         # Header
@@ -241,21 +420,21 @@ def create_layout(cell_type_levels, nt_types, np_system_names):
         dbc.Row([
             # Left panel - Controls
             dbc.Col(
-                create_left_panel(cell_type_levels, nt_types, np_system_names),
+                create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names, region_list, region_descriptions, enable_region_highlight, dataset_names, default_dataset, default_subsample),
                 width=2,
                 className="pe-3",
             ),
 
             # Center panel - Slice grid
             dbc.Col(
-                create_center_panel(),
+                create_center_panel(default_slices=default_slices),
                 width=7,
                 className="px-2",
             ),
 
             # Right panel - Details
             dbc.Col(
-                create_right_panel(),
+                create_right_panel(enable_quantile_toggle),
                 width=3,
                 className="ps-3",
             ),

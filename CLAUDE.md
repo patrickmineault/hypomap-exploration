@@ -57,12 +57,22 @@ uv run python -m app.app
 
 **Solution** (see `app/callbacks.py:create_slice_figure`):
 1. Build traces as plain Python dicts, not `go.Scatter()` objects
-2. Use `fig.add_traces(list_of_dicts)` to batch-add all traces at once
+2. Return a plain dict (not a `go.Figure`) — bypasses Plotly's per-trace validation (~400ms overhead). Dash accepts dicts for `dcc.Graph` figure output.
 3. Use `scattergl` (WebGL) instead of `scatter` for large point sets
-4. Combine multiple shapes into single traces (e.g., all region boundaries per slice)
+4. Region boundaries use `layout.shapes` (not scatter traces) to avoid coordinate misalignment between SVG and WebGL renderers
 5. Add annotations via `layout.annotations` list, not `fig.add_annotation()`
 
 This reduced render time from 8-10 seconds to <1 second.
+
+### WebGL Canvas Size Limit
+
+**CRITICAL**: The browser WebGL canvas is limited to 16,384 pixels in any dimension. On Retina displays (2x pixel ratio), a figure height of 8,192px will hit this limit. When exceeded, the canvas is **silently clamped**, causing `scattergl` traces to be vertically stretched/misaligned.
+
+**Mitigations** (all currently applied):
+- `plotGlPixelRatio: 1` in the `dcc.Graph` config (avoids 2x Retina multiplier)
+- Figure height capped to 16,000px
+- Do NOT use `scaleanchor`/`scaleratio` with `scattergl` in subplots — it conflicts with `matches` (silently ignored) and exacerbates canvas limit issues. Instead, compute `fig_height` from the data aspect ratio so subplot pixel dimensions naturally preserve 1:1 scaling.
+- Do NOT mix SVG `scatter` traces and `scattergl` traces in the same subplot — they use different coordinate mapping and will be misaligned. Use layout `shapes` for boundaries instead.
 
 # Marimo
 

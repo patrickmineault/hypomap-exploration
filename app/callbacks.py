@@ -310,9 +310,16 @@ def create_slice_figure(
             cells_df['_color'] = '#D3D3D3'
             cells_df['_legend_group'] = 'NA'
 
+    # Precompute region full names as a vectorized map (avoids per-cell Python calls)
+    unique_regions = cells_df['region_display'].unique()
+    region_full_name_map = {r: _region_full_name(r, region_descriptions) for r in unique_regions}
+    cells_df = cells_df.copy()
+    cells_df['_region_full'] = cells_df['region_display'].map(region_full_name_map)
+
     # Build all traces as a list first, then add in batch
     all_traces = []
     all_annotations = []
+    all_shapes = []
 
     for slice_idx, z_slice in enumerate(slices):
         row = slice_idx // n_cols + 1
@@ -323,69 +330,47 @@ def create_slice_figure(
 
         slice_df = cells_df[cells_df['z_slice'] == z_slice]
 
-        # Add region boundaries colored by CCF region colors
+        # Add region boundaries as layout shapes (avoids scatter/scattergl misalignment)
         if show_boundaries and z_slice in region_boundaries:
-            # Group boundaries by fill color (one trace per color for performance)
-            color_groups = {}  # hex_color -> (x_list, y_list)
-            highlight_x = []
-            highlight_y = []
-
             for region, hull_points in region_boundaries[z_slice].items():
-                x_coords = [p[0] for p in hull_points]
-                y_coords = [p[1] for p in hull_points]
-
                 # Match region with or without lateral suffix (e.g., 'ARH' matches 'ARH-L', 'ARH-R')
                 is_highlighted = (highlighted_region and
                                   (region == highlighted_region or
                                    region.startswith(f'{highlighted_region}-')))
 
+                # Build SVG path: M x0,y0 L x1,y1 ... Z
+                path_parts = []
+                for j, (px, py) in enumerate(hull_points):
+                    cmd = 'M' if j == 0 else 'L'
+                    path_parts.append(f'{cmd} {px},{py}')
+                path_parts.append('Z')
+                path_str = ' '.join(path_parts)
+
                 if is_highlighted:
-                    highlight_x.extend(x_coords + [None])
-                    highlight_y.extend(y_coords + [None])
+                    all_shapes.append({
+                        'type': 'path',
+                        'path': path_str,
+                        'fillcolor': 'rgba(34, 197, 94, 0.3)',
+                        'line': {'color': '#22c55e', 'width': 2},
+                        'layer': 'below',
+                        'xref': xaxis,
+                        'yref': yaxis,
+                    })
                 else:
-                    # Strip lateral suffix (-L, -R) for color lookup
                     base_region = region.rsplit('-', 1)[0] if region.endswith(('-L', '-R')) else region
                     hex_color = region_colors.get(base_region, '#F0F0F0')
-                    if hex_color not in color_groups:
-                        color_groups[hex_color] = ([], [])
-                    color_groups[hex_color][0].extend(x_coords + [None])
-                    color_groups[hex_color][1].extend(y_coords + [None])
-
-            # Draw non-highlighted regions grouped by color
-            for hex_color, (gx, gy) in color_groups.items():
-                # Convert hex to rgba with transparency
-                r = int(hex_color[1:3], 16)
-                g = int(hex_color[3:5], 16)
-                b = int(hex_color[5:7], 16)
-                all_traces.append({
-                    'type': 'scatter',
-                    'x': gx,
-                    'y': gy,
-                    'mode': 'lines',
-                    'fill': 'toself',
-                    'fillcolor': f'rgba({r}, {g}, {b}, 0.3)',
-                    'line': {'color': hex_color, 'width': 1},
-                    'hoverinfo': 'skip',
-                    'showlegend': False,
-                    'xaxis': xaxis,
-                    'yaxis': yaxis,
-                })
-
-            # Draw highlighted region on top with green
-            if highlight_x:
-                all_traces.append({
-                    'type': 'scatter',
-                    'x': highlight_x,
-                    'y': highlight_y,
-                    'mode': 'lines',
-                    'fill': 'toself',
-                    'fillcolor': 'rgba(34, 197, 94, 0.3)',
-                    'line': {'color': '#22c55e', 'width': 2},
-                    'hoverinfo': 'skip',
-                    'showlegend': False,
-                    'xaxis': xaxis,
-                    'yaxis': yaxis,
-                })
+                    r = int(hex_color[1:3], 16)
+                    g = int(hex_color[3:5], 16)
+                    b = int(hex_color[5:7], 16)
+                    all_shapes.append({
+                        'type': 'path',
+                        'path': path_str,
+                        'fillcolor': f'rgba({r}, {g}, {b}, 0.3)',
+                        'line': {'color': hex_color, 'width': 1},
+                        'layer': 'below',
+                        'xref': xaxis,
+                        'yref': yaxis,
+                    })
 
         # Add cells as single trace with per-point colors
         if len(slice_df) > 0:
@@ -418,11 +403,11 @@ def create_slice_figure(
                 'marker': marker_dict,
                 'showlegend': False,
                 'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>',
-                'customdata': list(zip(
-                    slice_df['cluster'].tolist(),
-                    slice_df['region_display'].tolist(),
-                    [_region_full_name(r, region_descriptions) for r in slice_df['region_display']],
-                )),
+                'customdata': np.column_stack([
+                    slice_df['cluster'].values,
+                    slice_df['region_display'].values,
+                    slice_df['_region_full'].values,
+                ]).tolist(),
                 'xaxis': xaxis,
                 'yaxis': yaxis,
             })
@@ -441,10 +426,10 @@ def create_slice_figure(
                     'opacity': 0.7,
                 })
 
-    # Add all traces at once (much faster than individual add_trace calls)
-    fig.add_traces(all_traces)
-
-    # Update layout and add all annotations at once
+    # Build figure as plain dict for speed (bypasses Plotly's per-trace validation
+    # which adds ~400ms overhead via add_traces). Dash accepts dicts for dcc.Graph.
+    # We use make_subplots only to generate the subplot layout structure.
+    fig_dict = fig.to_dict()
 
     # Add Z-value labels to annotations
     for slice_idx, z_slice in enumerate(slices):
@@ -462,15 +447,6 @@ def create_slice_figure(
             'yanchor': 'bottom',
         })
 
-    fig.update_layout(
-        height=fig_height,
-        showlegend=False,
-        margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor='white',
-        plot_bgcolor='white',
-        annotations=all_annotations,
-    )
-
     # Compute data ranges with padding
     x_min, x_max = cells_df['x'].min(), cells_df['x'].max()
     x_pad = (x_max - x_min) * 0.05
@@ -480,35 +456,32 @@ def create_slice_figure(
     y_pad = (y_max - y_min) * 0.05
     y_range_final = [y_max + y_pad, y_min - y_pad]
 
-    # Update all axes - link them together with matches
-    # NOTE: We do NOT use scaleanchor/scaleratio here because it causes vertical
-    # stretching with scattergl in 1-column mode. Instead, the figure height is
-    # computed from the data aspect ratio (see subplot_height calculation in callers)
-    # so that subplot pixel dimensions naturally preserve 1:1 data scaling.
+    # Configure axes directly on the layout dict.
+    # We do NOT use scaleanchor because it's silently ignored when combined with
+    # matches, and scattergl hits WebGL canvas size limits (16384px) in 1-column mode.
+    # Instead, fig_height is computed from data aspect ratio (see callers).
+    axis_common_x = dict(showticklabels=False, showgrid=False, zeroline=False, matches='x', range=x_range_final)
+    axis_common_y = dict(showticklabels=False, showgrid=False, zeroline=False, matches='y', range=y_range_final)
+
+    layout = fig_dict['layout']
     for i in range(1, n_rows * n_cols + 1):
-        row_i = (i - 1) // n_cols + 1
-        col_i = (i - 1) % n_cols + 1
+        x_key = f'xaxis{i}' if i > 1 else 'xaxis'
+        y_key = f'yaxis{i}' if i > 1 else 'yaxis'
+        layout.setdefault(x_key, {}).update(axis_common_x)
+        layout.setdefault(y_key, {}).update(axis_common_y)
 
-        fig.update_xaxes(
-            showticklabels=False,
-            showgrid=False,
-            zeroline=False,
-            matches='x',
-            range=x_range_final,
-            row=row_i,
-            col=col_i,
-        )
-        fig.update_yaxes(
-            showticklabels=False,
-            showgrid=False,
-            zeroline=False,
-            matches='y',
-            range=y_range_final,
-            row=row_i,
-            col=col_i,
-        )
+    layout.update(
+        height=fig_height,
+        showlegend=False,
+        margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        annotations=all_annotations,
+        shapes=all_shapes,
+    )
 
-    return fig
+    fig_dict['data'] = all_traces
+    return fig_dict
 
 
 def create_gene_bar(gene, expr, gene_info, is_ligand=True, use_quantile=False, quantile_value=None):
@@ -925,6 +898,19 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 marks[z] = ''
         return z_min, z_max, marks, [z_min, z_max]
 
+    # Update subsample slider default when dataset changes
+    @app.callback(
+        Output('subsample-pct', 'value'),
+        Input('dataset-radio', 'value'),
+    )
+    def update_subsample_default(dataset_name):
+        """Scale subsample % to target ~60k points regardless of dataset size."""
+        ds = get_dataset(dataset_name)
+        n_cells = len(ds['cells_df'])
+        default = max(5, min(30, int(60000 / n_cells * 100)))
+        # Round to nearest step of 5
+        return round(default / 5) * 5
+
     # Build inputs list for slice-grid callback
     slice_inputs = [
         Input('viz-mode', 'value'),
@@ -969,6 +955,8 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             y_span = cells_df['y'].max() - cells_df['y'].min()
             subplot_height = (900 / n_cols) * (y_span / x_span)
             fig_height = min(16000, max(800, int(n_rows * subplot_height)))
+            # Default subsample scales with dataset size (target ~60k points)
+            default_subsample = max(5, min(30, int(60000 / len(cells_df) * 100)))
             fig = create_slice_figure(
                 cells_df=cells_df,
                 slices=filtered_slices,
@@ -980,7 +968,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 threshold=threshold,
                 display_options=display_options or [],
                 point_size=point_size,
-                subsample_pct=subsample_pct or 30,
+                subsample_pct=subsample_pct or default_subsample,
                 diffusion_enabled=diffusion_enabled,
                 diffusion_range=diffusion_range or 0.5,
                 nt_mapping=nt_mapping,
@@ -1021,6 +1009,8 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             y_span = cells_df['y'].max() - cells_df['y'].min()
             subplot_height = (900 / n_cols) * (y_span / x_span)
             fig_height = max(800, int(n_rows * subplot_height))
+            # Default subsample scales with dataset size (target ~60k points)
+            default_subsample = max(5, min(30, int(60000 / len(cells_df) * 100)))
             fig = create_slice_figure(
                 cells_df=cells_df,
                 slices=filtered_slices,
@@ -1032,7 +1022,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 threshold=threshold,
                 display_options=display_options or [],
                 point_size=point_size,
-                subsample_pct=subsample_pct or 30,
+                subsample_pct=subsample_pct or default_subsample,
                 diffusion_enabled=diffusion_enabled,
                 diffusion_range=diffusion_range or 0.5,
                 nt_mapping=nt_mapping,
