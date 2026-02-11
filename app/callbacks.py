@@ -1,7 +1,8 @@
 """Dash callbacks for HypoMap Coronal Atlas Viewer."""
 
-from dash import Input, Output, State, ctx, callback
+from dash import Input, Output, State, ctx, callback, clientside_callback, ClientsideFunction, ALL, MATCH
 from dash import html
+from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -27,6 +28,16 @@ def get_color_for_category(categories, category):
     return EXTENDED_COLORS[idx % len(EXTENDED_COLORS)]
 
 
+def _region_full_name(region_display, region_descriptions):
+    """Get full name for a region acronym, stripping -L/-R suffix for lookup."""
+    if not region_descriptions:
+        return region_display
+    # Strip lateral suffix for lookup
+    base = region_display.rsplit('-', 1)[0] if region_display.endswith(('-L', '-R')) else region_display
+    info = region_descriptions.get(base, {})
+    return info.get('full_name', '') or region_display
+
+
 def create_slice_figure(
     cells_df,
     slices,
@@ -34,6 +45,7 @@ def create_slice_figure(
     cluster_level,
     nt_system,
     np_system,
+    hormone_system,
     threshold,
     display_options,
     point_size,
@@ -42,13 +54,19 @@ def create_slice_figure(
     diffusion_range,
     nt_mapping,
     np_systems,
+    hormone_systems,
     cluster_expression,
     cluster_np_expression,
     region_boundaries,
     region_centroids,
     region_colors,
+    highlighted_region=None,
+    rainbow_mode=False,
+    n_cols=2,
+    region_descriptions=None,
+    fig_height=800,
 ):
-    """Create the 2x9 grid of coronal slices.
+    """Create the grid of coronal slices.
 
     PERFORMANCE NOTE: This function uses several optimizations to achieve <1s render times:
     1. Build traces as plain dicts, not go.Scatter objects (avoids Plotly validation overhead)
@@ -62,8 +80,8 @@ def create_slice_figure(
     """
     # Subsampling is handled per-mode below (NT mode only subsamples background)
     n_slices = len(slices)
-    n_cols = 2
-    n_rows = 9
+    import math
+    n_rows = math.ceil(n_slices / n_cols)
 
     # Create subplot grid (no subplot_titles - we'll add annotations instead)
     fig = make_subplots(
@@ -128,6 +146,12 @@ def create_slice_figure(
         # Color by neuropeptide system expression using precomputed lookup
         cells_df = cells_df.copy()
 
+        # For rainbow mode, precompute cluster colors
+        if rainbow_mode:
+            unique_clusters_all = sorted(cells_df['cluster'].dropna().unique())
+            cluster_fill_colors = {cat: get_color_for_category(unique_clusters_all, cat)
+                                   for cat in unique_clusters_all}
+
         if np_system and np_system in cluster_np_expression:
             # Use precomputed cluster-system expression lookup
             system_lookup = cluster_np_expression[np_system]
@@ -164,11 +188,23 @@ def create_slice_figure(
 
             # Precompute per-cluster, then map to cells
             unique_clusters = cells_df['cluster'].unique()
-            cluster_colors = {c: get_np_color_group(c)[0] for c in unique_clusters}
+            cluster_np_colors = {c: get_np_color_group(c)[0] for c in unique_clusters}
             cluster_groups = {c: get_np_color_group(c)[1] for c in unique_clusters}
 
-            cells_df['_color'] = cells_df['cluster'].map(cluster_colors)
             cells_df['_legend_group'] = cells_df['cluster'].map(cluster_groups)
+
+            if rainbow_mode:
+                # Stroke = NP color, Fill = cluster color (gray for Neither)
+                cells_df['_stroke_color'] = cells_df['cluster'].map(cluster_np_colors)
+                # Fill with cluster color only for expressing cells, gray for non-expressing
+                cells_df['_color'] = cells_df.apply(
+                    lambda row: cluster_fill_colors.get(row['cluster'], '#D3D3D3')
+                    if cluster_groups.get(row['cluster'], 'Neither') != 'Neither'
+                    else '#D3D3D3',
+                    axis=1
+                )
+            else:
+                cells_df['_color'] = cells_df['cluster'].map(cluster_np_colors)
 
             # Only subsample background (Neither) cells, keep all foreground cells
             foreground_mask = cells_df['_legend_group'] != 'Neither'
@@ -218,11 +254,56 @@ def create_slice_figure(
                         within_range = distances <= diffusion_range
 
                         # Update colors and legend groups
-                        cells_df.loc[receptor_indices[within_range], '_color'] = '#4169E1'  # Blue - in range
+                        # In rainbow mode, update stroke color; otherwise update fill color
+                        color_col = '_stroke_color' if rainbow_mode else '_color'
+                        cells_df.loc[receptor_indices[within_range], color_col] = '#4169E1'  # Blue - in range
                         cells_df.loc[receptor_indices[within_range], '_legend_group'] = 'Receptor (in range)'
-                        cells_df.loc[receptor_indices[~within_range], '_color'] = '#40E0D0'  # Turquoise - out of range
+                        cells_df.loc[receptor_indices[~within_range], color_col] = '#40E0D0'  # Turquoise - out of range
                         cells_df.loc[receptor_indices[~within_range], '_legend_group'] = 'Receptor (out of range)'
 
+        else:
+            if subsample_pct < 100:
+                cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
+            cells_df['_color'] = '#D3D3D3'
+            cells_df['_legend_group'] = 'NA'
+
+    elif mode == 'hormone':
+        # Color by hormone receptor expression
+        cells_df = cells_df.copy()
+
+        if hormone_system and hormone_system in hormone_systems:
+            receptor_genes = hormone_systems[hormone_system]['receptors']
+
+            # Check each cluster for receptor expression
+            def has_receptor_expression(cluster_name):
+                if cluster_name not in cluster_expression:
+                    return False
+                cluster_genes = cluster_expression[cluster_name]
+                for gene in receptor_genes:
+                    if gene in cluster_genes and cluster_genes[gene]['mean_expr'] >= threshold:
+                        return True
+                return False
+
+            # Precompute per-cluster
+            unique_clusters = cells_df['cluster'].unique()
+            cluster_has_receptor = {c: has_receptor_expression(c) for c in unique_clusters}
+
+            cells_df['_has_receptor'] = cells_df['cluster'].map(cluster_has_receptor)
+
+            # Separate foreground/background
+            foreground_mask = cells_df['_has_receptor'] == True
+            foreground_df = cells_df[foreground_mask]
+            background_df = cells_df[~foreground_mask]
+
+            if subsample_pct < 100:
+                background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
+
+            # Background first, foreground last (so receptor-expressing cells render on top)
+            cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
+
+            # Color: black for expressing, gray for others
+            cells_df['_color'] = np.where(cells_df['_has_receptor'], '#000000', '#D3D3D3')
+            cells_df['_legend_group'] = np.where(cells_df['_has_receptor'], hormone_system, 'Other')
         else:
             if subsample_pct < 100:
                 cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
@@ -242,25 +323,64 @@ def create_slice_figure(
 
         slice_df = cells_df[cells_df['z_slice'] == z_slice]
 
-        # Add region boundaries - combine into single trace per slice
+        # Add region boundaries colored by CCF region colors
         if show_boundaries and z_slice in region_boundaries:
-            all_x = []
-            all_y = []
+            # Group boundaries by fill color (one trace per color for performance)
+            color_groups = {}  # hex_color -> (x_list, y_list)
+            highlight_x = []
+            highlight_y = []
+
             for region, hull_points in region_boundaries[z_slice].items():
                 x_coords = [p[0] for p in hull_points]
                 y_coords = [p[1] for p in hull_points]
-                all_x.extend(x_coords + [None])
-                all_y.extend(y_coords + [None])
 
-            if all_x:
+                # Match region with or without lateral suffix (e.g., 'ARH' matches 'ARH-L', 'ARH-R')
+                is_highlighted = (highlighted_region and
+                                  (region == highlighted_region or
+                                   region.startswith(f'{highlighted_region}-')))
+
+                if is_highlighted:
+                    highlight_x.extend(x_coords + [None])
+                    highlight_y.extend(y_coords + [None])
+                else:
+                    # Strip lateral suffix (-L, -R) for color lookup
+                    base_region = region.rsplit('-', 1)[0] if region.endswith(('-L', '-R')) else region
+                    hex_color = region_colors.get(base_region, '#F0F0F0')
+                    if hex_color not in color_groups:
+                        color_groups[hex_color] = ([], [])
+                    color_groups[hex_color][0].extend(x_coords + [None])
+                    color_groups[hex_color][1].extend(y_coords + [None])
+
+            # Draw non-highlighted regions grouped by color
+            for hex_color, (gx, gy) in color_groups.items():
+                # Convert hex to rgba with transparency
+                r = int(hex_color[1:3], 16)
+                g = int(hex_color[3:5], 16)
+                b = int(hex_color[5:7], 16)
                 all_traces.append({
                     'type': 'scatter',
-                    'x': all_x,
-                    'y': all_y,
+                    'x': gx,
+                    'y': gy,
                     'mode': 'lines',
                     'fill': 'toself',
-                    'fillcolor': 'rgba(240, 240, 240, 0.5)',
-                    'line': {'color': '#CCCCCC', 'width': 1},
+                    'fillcolor': f'rgba({r}, {g}, {b}, 0.3)',
+                    'line': {'color': hex_color, 'width': 1},
+                    'hoverinfo': 'skip',
+                    'showlegend': False,
+                    'xaxis': xaxis,
+                    'yaxis': yaxis,
+                })
+
+            # Draw highlighted region on top with green
+            if highlight_x:
+                all_traces.append({
+                    'type': 'scatter',
+                    'x': highlight_x,
+                    'y': highlight_y,
+                    'mode': 'lines',
+                    'fill': 'toself',
+                    'fillcolor': 'rgba(34, 197, 94, 0.3)',
+                    'line': {'color': '#22c55e', 'width': 2},
                     'hoverinfo': 'skip',
                     'showlegend': False,
                     'xaxis': xaxis,
@@ -276,19 +396,33 @@ def create_slice_figure(
                 slice_df['_sort'] = slice_df['_legend_group'].map(group_order_map).fillna(0)
                 slice_df = slice_df.sort_values('_sort')
 
+            # Build marker dict
+            marker_dict = {
+                'size': point_size,
+                'color': slice_df['_color'].tolist(),
+                'opacity': 0.7,
+            }
+
+            # Add stroke (line) for rainbow mode in NP
+            if mode == 'np' and rainbow_mode and '_stroke_color' in slice_df.columns:
+                marker_dict['line'] = {
+                    'color': slice_df['_stroke_color'].tolist(),
+                    'width': 2,
+                }
+
             all_traces.append({
-                'type': 'scattergl',
+                'type': 'scatter',
                 'x': slice_df['x'].tolist(),
                 'y': slice_df['y'].tolist(),
                 'mode': 'markers',
-                'marker': {
-                    'size': point_size,
-                    'color': slice_df['_color'].tolist(),
-                    'opacity': 0.7,
-                },
+                'marker': marker_dict,
                 'showlegend': False,
-                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]}<br><extra></extra>',
-                'customdata': slice_df[['cluster', 'region_display']].values.tolist(),
+                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>',
+                'customdata': list(zip(
+                    slice_df['cluster'].tolist(),
+                    slice_df['region_display'].tolist(),
+                    [_region_full_name(r, region_descriptions) for r in slice_df['region_display']],
+                )),
                 'xaxis': xaxis,
                 'yaxis': yaxis,
             })
@@ -329,7 +463,7 @@ def create_slice_figure(
         })
 
     fig.update_layout(
-        height=2000,
+        height=fig_height,
         showlegend=False,
         margin=dict(l=10, r=10, t=10, b=10),
         paper_bgcolor='white',
@@ -337,13 +471,14 @@ def create_slice_figure(
         annotations=all_annotations,
     )
 
-    # Compute data range for default zoom (1.2x zoom = tighter range for x)
+    # Compute data ranges with padding
     x_min, x_max = cells_df['x'].min(), cells_df['x'].max()
-    x_center = (x_min + x_max) / 2
-    x_range = (x_max - x_min) / 1.2  # Zoom in by 1.2x
+    x_pad = (x_max - x_min) * 0.05
+    x_range_final = [x_min - x_pad, x_max + x_pad]
 
-    x_range_final = [x_center - x_range / 2, x_center + x_range / 2]
-    y_range_final = [5.5, 8.5]  # Fixed y range as requested
+    y_min, y_max = cells_df['y'].min(), cells_df['y'].max()
+    y_pad = (y_max - y_min) * 0.05
+    y_range_final = [y_max + y_pad, y_min - y_pad]
 
     # Update all axes - link them together with matches
     for i in range(1, n_rows * n_cols + 1):
@@ -354,7 +489,7 @@ def create_slice_figure(
             showticklabels=False,
             showgrid=False,
             zeroline=False,
-            matches='x',  # Link all x-axes together
+            matches='x',
             range=x_range_final,
             row=row_i,
             col=col_i,
@@ -363,7 +498,7 @@ def create_slice_figure(
             showticklabels=False,
             showgrid=False,
             zeroline=False,
-            matches='y',  # Link all y-axes together
+            matches='y',
             scaleanchor='x',
             scaleratio=1,
             range=y_range_final,
@@ -374,8 +509,17 @@ def create_slice_figure(
     return fig
 
 
-def create_gene_bar(gene, expr, gene_info, is_ligand=True):
-    """Create a horizontal bar for gene expression with hoverable tooltip."""
+def create_gene_bar(gene, expr, gene_info, is_ligand=True, use_quantile=False, quantile_value=None):
+    """Create a horizontal bar for gene expression with hoverable tooltip.
+
+    Args:
+        gene: Gene name
+        expr: Expression value (log2CPM)
+        gene_info: Dict with gene system info for tooltips
+        is_ligand: True for ligand, False for receptor
+        use_quantile: If True, display quantile instead of log2CPM
+        quantile_value: The quantile percentile (0-100) if use_quantile is True
+    """
     # Get system info for this gene
     systems = gene_info.get(gene, [])
     if systems:
@@ -393,8 +537,14 @@ def create_gene_bar(gene, expr, gene_info, is_ligand=True):
     else:
         tooltip_text = f"{gene}: No system info available"
 
-    # Normalize expression for bar width (assuming max ~10 log2CPM)
-    bar_width_pct = min(100, expr * 10)
+    # Determine display value and bar width
+    if use_quantile and quantile_value is not None:
+        display_value = f'{quantile_value:.0f}'
+        bar_width_pct = quantile_value  # 0-100 directly maps to %
+    else:
+        display_value = f'{expr:.1f}'
+        bar_width_pct = min(100, expr * 10)  # Assuming max ~10 log2CPM
+
     color = '#667eea' if is_ligand else '#764ba2'  # Modern gradient colors
 
     return html.Div([
@@ -435,7 +585,7 @@ def create_gene_bar(gene, expr, gene_info, is_ligand=True):
         ),
         # Value - fixed width, right aligned
         html.Span(
-            f'{expr:.1f}',
+            display_value,
             style={
                 'fontSize': '0.75rem',
                 'width': '32px',
@@ -503,7 +653,7 @@ def create_region_bar(region_name, count, total, index):
     ])
 
 
-def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, region_descriptions, gene_info):
+def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, region_descriptions, gene_info, use_quantile=False, gene_quantiles=None):
     """Create cell details panel content."""
     if not click_data or 'points' not in click_data or not click_data['points']:
         return html.P("Click on a cell to see details", className="text-muted")
@@ -537,16 +687,29 @@ def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, re
         cluster_expr = cluster_expression[cluster_name]
         for gene, info in cluster_expr.items():
             if info['mean_expr'] >= 1:  # Expression threshold for display
-                if info['is_ligand']:
-                    top_ligands.append((gene, info['mean_expr']))
-                if info['is_receptor']:
-                    top_receptors.append((gene, info['mean_expr']))
+                # Get quantile value if available
+                quantile = None
+                if gene_quantiles and gene in gene_quantiles:
+                    quantile = gene_quantiles[gene].get(cluster_name)
 
-    top_ligands = sorted(top_ligands, key=lambda x: -x[1])[:5]
-    top_receptors = sorted(top_receptors, key=lambda x: -x[1])[:5]
+                if info['is_ligand']:
+                    top_ligands.append((gene, info['mean_expr'], quantile))
+                if info['is_receptor']:
+                    top_receptors.append((gene, info['mean_expr'], quantile))
+
+    # Sort by quantile if in quantile mode, otherwise by expression
+    if use_quantile:
+        top_ligands = sorted(top_ligands, key=lambda x: -(x[2] or 0))[:5]
+        top_receptors = sorted(top_receptors, key=lambda x: -(x[2] or 0))[:5]
+    else:
+        top_ligands = sorted(top_ligands, key=lambda x: -x[1])[:5]
+        top_receptors = sorted(top_receptors, key=lambda x: -x[1])[:5]
 
     # Get region distribution for this cluster
     cluster_regions = cells_df[cells_df['cluster'] == cluster_name]['region'].value_counts().head(5)
+
+    # Header label based on mode
+    metric_label = "Quantile" if use_quantile else "log₂(CPM)"
 
     return html.Div([
         # Cluster info
@@ -588,44 +751,48 @@ def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, re
 
         # Neuropeptide profile - graphical bars with hoverable labels
         html.Div([
-            html.H6("Top Ligands [log₂(CPM)]", className="text-muted mb-1"),
+            html.H6(f"Top Ligands [{metric_label}]", className="text-muted mb-1"),
             html.Div([
-                create_gene_bar(gene, expr, gene_info, is_ligand=True)
-                for gene, expr in top_ligands
+                create_gene_bar(gene, expr, gene_info, is_ligand=True, use_quantile=use_quantile, quantile_value=quantile)
+                for gene, expr, quantile in top_ligands
             ] if top_ligands else [html.P("None expressed", className="text-muted small")]),
         ], className="mb-3"),
 
         html.Div([
-            html.H6("Top Receptors [log₂(CPM)]", className="text-muted mb-1"),
+            html.H6(f"Top Receptors [{metric_label}]", className="text-muted mb-1"),
             html.Div([
-                create_gene_bar(gene, expr, gene_info, is_ligand=False)
-                for gene, expr in top_receptors
+                create_gene_bar(gene, expr, gene_info, is_ligand=False, use_quantile=use_quantile, quantile_value=quantile)
+                for gene, expr, quantile in top_receptors
             ] if top_receptors else [html.P("None expressed", className="text-muted small")]),
         ]),
     ])
 
 
-def register_callbacks(app, app_data):
+def register_callbacks(app, app_data, enable_region_highlight=False, enable_quantile_toggle=False):
     """Register all callbacks for the application."""
 
-    cells_df = app_data['cells_df']
-    slices = app_data['slices']
+    datasets = app_data['datasets']
+    default_dataset = app_data['default_dataset']
     nt_mapping = app_data['nt_mapping']
     nt_types = app_data['nt_types']
     np_systems = app_data['np_systems']
+    hormone_systems = app_data['hormone_systems']
     gene_info = app_data['gene_info']
-    cluster_expression = app_data['cluster_expression']
-    cluster_np_expression = app_data['cluster_np_expression']
-    region_boundaries = app_data['region_boundaries']
-    region_centroids = app_data['region_centroids']
-    region_colors = app_data['region_colors']
     region_descriptions = app_data['region_descriptions']
+
+    def get_dataset(dataset_name):
+        """Get dataset bundle by name, falling back to default."""
+        if dataset_name and dataset_name in datasets:
+            return datasets[dataset_name]
+        return datasets[default_dataset]
 
     @app.callback(
         [
             Output('cluster-controls', 'style'),
             Output('nt-controls', 'style'),
             Output('np-controls', 'style'),
+            Output('hormone-controls', 'style'),
+            Output('expression-threshold-container', 'style'),
         ],
         Input('viz-mode', 'value'),
     )
@@ -634,7 +801,9 @@ def register_callbacks(app, app_data):
         cluster_style = {'display': 'block'} if mode == 'cluster' else {'display': 'none'}
         nt_style = {'display': 'block'} if mode == 'nt' else {'display': 'none'}
         np_style = {'display': 'block'} if mode == 'np' else {'display': 'none'}
-        return cluster_style, nt_style, np_style
+        hormone_style = {'display': 'block'} if mode == 'hormone' else {'display': 'none'}
+        threshold_style = {'display': 'block'} if mode in ['np', 'hormone'] else {'display': 'none'}
+        return cluster_style, nt_style, np_style, hormone_style, threshold_style
 
     @app.callback(
         Output('diffusion-range-container', 'style'),
@@ -647,55 +816,288 @@ def register_callbacks(app, app_data):
         return {'display': 'none'}
 
     @app.callback(
-        Output('slice-grid', 'figure'),
-        [
-            Input('viz-mode', 'value'),
-            Input('cluster-level', 'value'),
-            Input('nt-system', 'value'),
-            Input('np-system', 'value'),
-            Input('expression-threshold', 'value'),
-            Input('display-options', 'value'),
-            Input('point-size', 'value'),
-            Input('subsample-pct', 'value'),
-            Input('diffusion-filter-enabled', 'value'),
-            Input('diffusion-range', 'value'),
-        ],
+        Output('np-system-info', 'children'),
+        Input('np-system', 'value'),
     )
-    def update_slices(mode, cluster_level, nt_system, np_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range):
-        """Update the slice grid visualization."""
-        return create_slice_figure(
-            cells_df=cells_df,
-            slices=slices,
-            mode=mode,
-            cluster_level=cluster_level,
-            nt_system=nt_system,
-            np_system=np_system,
-            threshold=threshold,
-            display_options=display_options or [],
-            point_size=point_size,
-            subsample_pct=subsample_pct or 30,
-            diffusion_enabled=diffusion_enabled,
-            diffusion_range=diffusion_range or 0.5,
-            nt_mapping=nt_mapping,
-            np_systems=np_systems,
-            cluster_expression=cluster_expression,
-            cluster_np_expression=cluster_np_expression,
-            region_boundaries=region_boundaries,
-            region_centroids=region_centroids,
-            region_colors=region_colors,
-        )
+    def update_np_system_info(system):
+        """Display info about selected neuropeptide system."""
+        if not system or system not in np_systems:
+            return None
 
-    @app.callback(
-        Output('cell-details', 'children'),
-        Input('slice-grid', 'clickData'),
-    )
-    def update_details(click_data):
-        """Update cell details on click."""
-        return create_cell_details(
-            click_data,
-            cells_df,
-            nt_mapping,
-            cluster_expression,
-            region_descriptions,
-            gene_info,
+        system_data = np_systems[system]
+        ligands = sorted(system_data['ligands'])
+        # Flatten receptor tuples and deduplicate
+        receptors = sorted(set(g for tup in system_data['receptors'] for g in tup))
+
+        # Get functional role from gene_info (look up first ligand)
+        func_role = ''
+        if ligands and ligands[0] in gene_info:
+            func_role = gene_info[ligands[0]][0].get('functional_role', '')
+
+        return [
+            html.Div([html.Strong("Ligands: "), ', '.join(ligands)]) if ligands else None,
+            html.Div([html.Strong("Receptors: "), ', '.join(receptors)]) if receptors else None,
+            html.Div([html.Strong("Function: "), func_role], style={'fontStyle': 'italic'}) if func_role else None,
+        ]
+
+    # Region highlight: Click to select region
+    if enable_region_highlight:
+        @app.callback(
+            Output('selected-region', 'data'),
+            Input({'type': 'region-btn', 'index': ALL}, 'n_clicks'),
+            State('selected-region', 'data'),
+            prevent_initial_call=True,
         )
+        def select_region(n_clicks_list, current_selection):
+            """Handle region button clicks - toggle selection."""
+            if not ctx.triggered_id or all(n == 0 for n in n_clicks_list if n):
+                raise PreventUpdate
+
+            clicked_region = ctx.triggered_id['index']
+
+            # Toggle: if already selected, deselect; otherwise select
+            if current_selection == clicked_region:
+                return None
+            return clicked_region
+
+        @app.callback(
+            Output({'type': 'region-btn', 'index': ALL}, 'style'),
+            Input('selected-region', 'data'),
+            State({'type': 'region-btn', 'index': ALL}, 'id'),
+        )
+        def update_button_styles(selected_region, button_ids):
+            """Update button styles to show selected state."""
+            styles = []
+            for btn_id in button_ids:
+                region = btn_id['index']
+                if region == selected_region:
+                    # Selected style - green
+                    styles.append({
+                        'display': 'inline-block',
+                        'padding': '2px 6px',
+                        'margin': '2px',
+                        'fontSize': '0.75rem',
+                        'borderRadius': '4px',
+                        'backgroundColor': '#22c55e',
+                        'border': '1px solid #16a34a',
+                        'cursor': 'pointer',
+                        'color': 'white',
+                        'fontWeight': '600',
+                    })
+                else:
+                    # Default style
+                    styles.append({
+                        'display': 'inline-block',
+                        'padding': '2px 6px',
+                        'margin': '2px',
+                        'fontSize': '0.75rem',
+                        'borderRadius': '4px',
+                        'backgroundColor': '#f0f0f0',
+                        'border': '1px solid transparent',
+                        'cursor': 'pointer',
+                        'color': '#333',
+                    })
+            return styles
+
+    # Update z-range slider when dataset changes
+    @app.callback(
+        [
+            Output('z-range', 'min'),
+            Output('z-range', 'max'),
+            Output('z-range', 'marks'),
+            Output('z-range', 'value'),
+        ],
+        Input('dataset-radio', 'value'),
+    )
+    def update_z_range_slider(dataset_name):
+        """Update z-range slider to match the selected dataset's slices."""
+        ds = get_dataset(dataset_name)
+        slices = ds['slices']
+        z_min = slices[0]
+        z_max = slices[-1]
+        marks = {}
+        for i, z in enumerate(slices):
+            if i == 0 or i == len(slices) - 1 or i % 4 == 0:
+                marks[z] = f'{z:.1f}'
+            else:
+                marks[z] = ''
+        return z_min, z_max, marks, [z_min, z_max]
+
+    # Build inputs list for slice-grid callback
+    slice_inputs = [
+        Input('viz-mode', 'value'),
+        Input('cluster-level', 'value'),
+        Input('nt-system', 'value'),
+        Input('np-system', 'value'),
+        Input('hormone-system', 'value'),
+        Input('expression-threshold', 'value'),
+        Input('display-options', 'value'),
+        Input('point-size', 'value'),
+        Input('subsample-pct', 'value'),
+        Input('diffusion-filter-enabled', 'value'),
+        Input('diffusion-range', 'value'),
+        Input('rainbow-mode', 'value'),
+        Input('dataset-radio', 'value'),
+        Input('grid-columns', 'value'),
+        Input('z-range', 'value'),
+    ]
+
+    if enable_region_highlight:
+        slice_inputs.append(Input('selected-region', 'data'))
+
+        @app.callback(
+            [Output('slice-grid', 'figure'),
+             Output('slice-grid', 'style')],
+            slice_inputs,
+        )
+        def update_slices_with_highlight(mode, cluster_level, nt_system, np_system, hormone_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range, rainbow_enabled, dataset_name, grid_columns, z_range, selected_region):
+            """Update the slice grid visualization with region highlighting."""
+            ds = get_dataset(dataset_name)
+            n_cols = grid_columns or 2
+            # Filter slices by z-range
+            z_min, z_max = (z_range or [ds['slices'][0], ds['slices'][-1]])
+            filtered_slices = [s for s in ds['slices'] if z_min <= s <= z_max]
+            if not filtered_slices:
+                filtered_slices = ds['slices']
+            import math
+            n_rows = math.ceil(len(filtered_slices) / n_cols)
+            # Compute figure height from data aspect ratio, capped for WebGL limits
+            cells_df = ds['cells_df']
+            x_span = cells_df['x'].max() - cells_df['x'].min()
+            y_span = cells_df['y'].max() - cells_df['y'].min()
+            subplot_height = (900 / n_cols) * (y_span / x_span)
+            fig_height = min(16000, max(800, int(n_rows * subplot_height)))
+            fig = create_slice_figure(
+                cells_df=cells_df,
+                slices=filtered_slices,
+                mode=mode,
+                cluster_level=cluster_level,
+                nt_system=nt_system,
+                np_system=np_system,
+                hormone_system=hormone_system,
+                threshold=threshold,
+                display_options=display_options or [],
+                point_size=point_size,
+                subsample_pct=subsample_pct or 30,
+                diffusion_enabled=diffusion_enabled,
+                diffusion_range=diffusion_range or 0.5,
+                nt_mapping=nt_mapping,
+                np_systems=np_systems,
+                hormone_systems=hormone_systems,
+                cluster_expression=ds['cluster_expression'],
+                cluster_np_expression=ds['cluster_np_expression'],
+                region_boundaries=ds['region_boundaries'],
+                region_centroids=ds['region_centroids'],
+                region_colors=ds['region_colors'],
+                highlighted_region=selected_region,
+                rainbow_mode='enabled' in (rainbow_enabled or []),
+                n_cols=n_cols,
+                region_descriptions=region_descriptions,
+                fig_height=fig_height,
+            )
+            return fig, {'height': f'{fig_height}px'}
+    else:
+        @app.callback(
+            [Output('slice-grid', 'figure'),
+             Output('slice-grid', 'style')],
+            slice_inputs,
+        )
+        def update_slices(mode, cluster_level, nt_system, np_system, hormone_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range, rainbow_enabled, dataset_name, grid_columns, z_range):
+            """Update the slice grid visualization."""
+            ds = get_dataset(dataset_name)
+            n_cols = grid_columns or 2
+            # Filter slices by z-range
+            z_min, z_max = (z_range or [ds['slices'][0], ds['slices'][-1]])
+            filtered_slices = [s for s in ds['slices'] if z_min <= s <= z_max]
+            if not filtered_slices:
+                filtered_slices = ds['slices']
+            import math
+            n_rows = math.ceil(len(filtered_slices) / n_cols)
+            # Compute figure height from data aspect ratio
+            cells_df = ds['cells_df']
+            x_span = cells_df['x'].max() - cells_df['x'].min()
+            y_span = cells_df['y'].max() - cells_df['y'].min()
+            subplot_height = (900 / n_cols) * (y_span / x_span)
+            fig_height = max(800, int(n_rows * subplot_height))
+            fig = create_slice_figure(
+                cells_df=cells_df,
+                slices=filtered_slices,
+                mode=mode,
+                cluster_level=cluster_level,
+                nt_system=nt_system,
+                np_system=np_system,
+                hormone_system=hormone_system,
+                threshold=threshold,
+                display_options=display_options or [],
+                point_size=point_size,
+                subsample_pct=subsample_pct or 30,
+                diffusion_enabled=diffusion_enabled,
+                diffusion_range=diffusion_range or 0.5,
+                nt_mapping=nt_mapping,
+                np_systems=np_systems,
+                hormone_systems=hormone_systems,
+                cluster_expression=ds['cluster_expression'],
+                cluster_np_expression=ds['cluster_np_expression'],
+                region_boundaries=ds['region_boundaries'],
+                region_centroids=ds['region_centroids'],
+                region_colors=ds['region_colors'],
+                highlighted_region=None,
+                rainbow_mode='enabled' in (rainbow_enabled or []),
+                n_cols=n_cols,
+                region_descriptions=region_descriptions,
+                fig_height=fig_height,
+            )
+            return fig, {'height': f'{fig_height}px'}
+
+    # Quantile toggle: Expression mode toggle callbacks
+    if enable_quantile_toggle:
+        @app.callback(
+            Output('expr-mode-label', 'children'),
+            Input('expr-mode-toggle', 'value'),
+        )
+        def update_expr_mode_label(use_quantile):
+            """Update expression mode label based on toggle."""
+            return "Quantile" if use_quantile else "log₂(CPM)"
+
+        @app.callback(
+            Output('cell-details', 'children'),
+            [
+                Input('slice-grid', 'clickData'),
+                Input('expr-mode-toggle', 'value'),
+                Input('dataset-radio', 'value'),
+            ],
+        )
+        def update_details_experimental(click_data, use_quantile, dataset_name):
+            """Update cell details on click (with quantile support)."""
+            ds = get_dataset(dataset_name)
+            return create_cell_details(
+                click_data,
+                ds['cells_df'],
+                nt_mapping,
+                ds['cluster_expression'],
+                region_descriptions,
+                gene_info,
+                use_quantile=use_quantile or False,
+                gene_quantiles=ds['gene_quantiles'],
+            )
+    else:
+        @app.callback(
+            Output('cell-details', 'children'),
+            [
+                Input('slice-grid', 'clickData'),
+                Input('dataset-radio', 'value'),
+            ],
+        )
+        def update_details(click_data, dataset_name):
+            """Update cell details on click."""
+            ds = get_dataset(dataset_name)
+            return create_cell_details(
+                click_data,
+                ds['cells_df'],
+                nt_mapping,
+                ds['cluster_expression'],
+                region_descriptions,
+                gene_info,
+                use_quantile=False,
+                gene_quantiles={},
+            )
