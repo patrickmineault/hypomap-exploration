@@ -331,8 +331,6 @@ def create_slice_figure(
     arr_cluster = cells_df['cluster'].values
     arr_region = cells_df['region_display'].values
     arr_region_full = np.array([region_full_name_map.get(r, r) for r in arr_region])
-    # Track which cells are background (for skipping hover customdata)
-    arr_is_bg = cells_df['_legend_group'].values == 'Neither' if '_legend_group' in cells_df.columns else np.zeros(len(cells_df), dtype=bool)
     has_stroke = mode == 'np' and rainbow_mode and '_stroke_color' in cells_df.columns
     arr_stroke = cells_df['_stroke_color'].values if has_stroke else None
 
@@ -389,51 +387,31 @@ def create_slice_figure(
             s_x = arr_x[mask]
             s_y = arr_y[mask]
             s_color = arr_color[mask]
-            s_bg = arr_is_bg[mask]
 
-            # Split into background (no hover) and foreground (with hover) traces
-            # to avoid sending customdata for gray background cells (~50% payload savings)
-            for is_bg_trace in ([True, False] if s_bg.any() and (~s_bg).any() else
-                                [True] if s_bg.all() else [False]):
-                if is_bg_trace:
-                    tmask = s_bg
-                else:
-                    tmask = ~s_bg
+            marker_dict = {
+                'size': point_size,
+                'color': s_color.tolist(),
+                'opacity': 0.7,
+            }
 
-                t_color = s_color[tmask]
-                marker_dict = {
-                    'size': point_size,
-                    'color': t_color.tolist(),
-                    'opacity': 0.7,
+            if has_stroke:
+                marker_dict['line'] = {
+                    'color': arr_stroke[mask].tolist(),
+                    'width': 2,
                 }
 
-                if has_stroke and not is_bg_trace:
-                    marker_dict['line'] = {
-                        'color': arr_stroke[mask][tmask].tolist(),
-                        'width': 2,
-                    }
-
-                trace = {
-                    'type': 'scattergl',
-                    'x': s_x[tmask].tolist(),
-                    'y': s_y[tmask].tolist(),
-                    'mode': 'markers',
-                    'marker': marker_dict,
-                    'showlegend': False,
-                    'xaxis': xaxis,
-                    'yaxis': yaxis,
-                }
-
-                if is_bg_trace:
-                    trace['hoverinfo'] = 'skip'
-                else:
-                    trace['hovertemplate'] = '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>'
-                    s_cluster = arr_cluster[mask][tmask]
-                    s_region = arr_region[mask][tmask]
-                    s_full = arr_region_full[mask][tmask]
-                    trace['customdata'] = np.column_stack([s_cluster, s_region, s_full]).tolist()
-
-                all_traces.append(trace)
+            all_traces.append({
+                'type': 'scattergl',
+                'x': s_x.tolist(),
+                'y': s_y.tolist(),
+                'mode': 'markers',
+                'marker': marker_dict,
+                'showlegend': False,
+                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>',
+                'customdata': np.column_stack([arr_cluster[mask], arr_region[mask], arr_region_full[mask]]).tolist(),
+                'xaxis': xaxis,
+                'yaxis': yaxis,
+            })
 
         # Collect annotations
         if show_labels and z_slice in region_centroids:
