@@ -480,7 +480,7 @@ def create_slice_figure(
     y_pad = (y_max - y_min) * 0.05
     y_range_final = [y_max + y_pad, y_min - y_pad]
 
-    # Update all axes - link them together with matches
+    # Update all axes - link them together with matches and equal scaling
     for i in range(1, n_rows * n_cols + 1):
         row_i = (i - 1) // n_cols + 1
         col_i = (i - 1) % n_cols + 1
@@ -491,6 +491,7 @@ def create_slice_figure(
             zeroline=False,
             matches='x',
             range=x_range_final,
+            constrain='domain',
             row=row_i,
             col=col_i,
         )
@@ -501,6 +502,7 @@ def create_slice_figure(
             matches='y',
             scaleanchor='x',
             scaleratio=1,
+            constraintoward='top',
             range=y_range_final,
             row=row_i,
             col=col_i,
