@@ -120,13 +120,16 @@ def create_slice_figure(
         # Map cluster to NT type (direct lookup is fast)
         cells_df['_nt_type'] = cells_df['cluster'].map(nt_mapping).fillna('NA')
 
-        # Only subsample background (non-selected) cells, keep all foreground cells
+        # Subsample background; also cap foreground if total would be too large
         foreground_mask = cells_df['_nt_type'] == nt_system
         foreground_df = cells_df[foreground_mask]
         background_df = cells_df[~foreground_mask]
 
         if subsample_pct < 100:
             background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
+            target_total = int(len(cells_df) * subsample_pct / 100)
+            if len(foreground_df) > target_total:
+                foreground_df = foreground_df.sample(n=target_total, random_state=42)
 
         # Background first, foreground last so active cells render on top
         cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
@@ -206,13 +209,17 @@ def create_slice_figure(
             else:
                 cells_df['_color'] = cells_df['cluster'].map(cluster_np_colors)
 
-            # Only subsample background (Neither) cells, keep all foreground cells
+            # Subsample background; also cap foreground if total would be too large
             foreground_mask = cells_df['_legend_group'] != 'Neither'
             foreground_df = cells_df[foreground_mask]
             background_df = cells_df[~foreground_mask]
 
             if subsample_pct < 100:
                 background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
+                # Cap total points to keep payload manageable (~60k target)
+                target_total = int(len(cells_df) * subsample_pct / 100)
+                if len(foreground_df) > target_total:
+                    foreground_df = foreground_df.sample(n=target_total, random_state=42)
 
             cells_df = pd.concat([foreground_df, background_df], ignore_index=True)
 
@@ -290,13 +297,16 @@ def create_slice_figure(
 
             cells_df['_has_receptor'] = cells_df['cluster'].map(cluster_has_receptor)
 
-            # Separate foreground/background
+            # Subsample background; also cap foreground if total would be too large
             foreground_mask = cells_df['_has_receptor'] == True
             foreground_df = cells_df[foreground_mask]
             background_df = cells_df[~foreground_mask]
 
             if subsample_pct < 100:
                 background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
+                target_total = int(len(cells_df) * subsample_pct / 100)
+                if len(foreground_df) > target_total:
+                    foreground_df = foreground_df.sample(n=target_total, random_state=42)
 
             # Background first, foreground last (so receptor-expressing cells render on top)
             cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
@@ -313,10 +323,27 @@ def create_slice_figure(
     # Precompute region full names as a vectorized map (avoids per-cell Python calls)
     unique_regions = cells_df['region_display'].unique()
     region_full_name_map = {r: _region_full_name(r, region_descriptions) for r in unique_regions}
-    cells_df = cells_df.copy()
-    cells_df['_region_full'] = cells_df['region_display'].map(region_full_name_map)
 
-    # Build all traces as a list first, then add in batch
+    # Sort for NP mode (render foreground on top) before extracting arrays
+    if mode == 'np':
+        group_order_map = {'Neither': 0, 'Receptor (out of range)': 1, 'Receptor (in range)': 2,
+                           'Receptor': 3, 'Both': 4, 'Ligand': 5}
+        sort_keys = cells_df['_legend_group'].map(group_order_map).fillna(0).values
+        sort_idx = np.argsort(sort_keys, kind='stable')
+        cells_df = cells_df.iloc[sort_idx]
+
+    # Extract numpy arrays once — avoids per-slice pandas indexing overhead
+    arr_x = cells_df['x'].values
+    arr_y = cells_df['y'].values
+    arr_z = cells_df['z_slice'].values
+    arr_color = cells_df['_color'].values
+    arr_cluster = cells_df['cluster'].values
+    arr_region = cells_df['region_display'].values
+    arr_region_full = np.array([region_full_name_map.get(r, r) for r in arr_region])
+    has_stroke = mode == 'np' and rainbow_mode and '_stroke_color' in cells_df.columns
+    arr_stroke = cells_df['_stroke_color'].values if has_stroke else None
+
+    # Build all traces, shapes, and annotations
     all_traces = []
     all_annotations = []
     all_shapes = []
@@ -328,33 +355,26 @@ def create_slice_figure(
         xaxis = f'x{slice_idx + 1}' if slice_idx > 0 else 'x'
         yaxis = f'y{slice_idx + 1}' if slice_idx > 0 else 'y'
 
-        slice_df = cells_df[cells_df['z_slice'] == z_slice]
-
         # Add region boundaries as layout shapes (avoids scatter/scattergl misalignment)
         if show_boundaries and z_slice in region_boundaries:
             for region, hull_points in region_boundaries[z_slice].items():
-                # Match region with or without lateral suffix (e.g., 'ARH' matches 'ARH-L', 'ARH-R')
                 is_highlighted = (highlighted_region and
                                   (region == highlighted_region or
                                    region.startswith(f'{highlighted_region}-')))
 
                 # Build SVG path: M x0,y0 L x1,y1 ... Z
-                path_parts = []
-                for j, (px, py) in enumerate(hull_points):
-                    cmd = 'M' if j == 0 else 'L'
-                    path_parts.append(f'{cmd} {px},{py}')
+                path_parts = [f'M {hull_points[0][0]},{hull_points[0][1]}']
+                for px, py in hull_points[1:]:
+                    path_parts.append(f'L {px},{py}')
                 path_parts.append('Z')
                 path_str = ' '.join(path_parts)
 
                 if is_highlighted:
                     all_shapes.append({
-                        'type': 'path',
-                        'path': path_str,
+                        'type': 'path', 'path': path_str,
                         'fillcolor': 'rgba(34, 197, 94, 0.3)',
                         'line': {'color': '#22c55e', 'width': 2},
-                        'layer': 'below',
-                        'xref': xaxis,
-                        'yref': yaxis,
+                        'layer': 'below', 'xref': xaxis, 'yref': yaxis,
                     })
                 else:
                     base_region = region.rsplit('-', 1)[0] if region.endswith(('-L', '-R')) else region
@@ -363,51 +383,46 @@ def create_slice_figure(
                     g = int(hex_color[3:5], 16)
                     b = int(hex_color[5:7], 16)
                     all_shapes.append({
-                        'type': 'path',
-                        'path': path_str,
+                        'type': 'path', 'path': path_str,
                         'fillcolor': f'rgba({r}, {g}, {b}, 0.3)',
                         'line': {'color': hex_color, 'width': 1},
-                        'layer': 'below',
-                        'xref': xaxis,
-                        'yref': yaxis,
+                        'layer': 'below', 'xref': xaxis, 'yref': yaxis,
                     })
 
-        # Add cells as single trace with per-point colors
-        if len(slice_df) > 0:
-            if mode == 'np':
-                group_order_map = {'Neither': 0, 'Receptor (out of range)': 1, 'Receptor (in range)': 2,
-                                   'Receptor': 3, 'Both': 4, 'Ligand': 5}
-                slice_df = slice_df.copy()
-                slice_df['_sort'] = slice_df['_legend_group'].map(group_order_map).fillna(0)
-                slice_df = slice_df.sort_values('_sort')
+        # Add cells — use numpy boolean mask on pre-extracted arrays (no pandas)
+        mask = arr_z == z_slice
+        n_pts = mask.sum()
+        if n_pts > 0:
+            s_x = arr_x[mask]
+            s_y = arr_y[mask]
+            s_color = arr_color[mask]
 
-            # Build marker dict
             marker_dict = {
                 'size': point_size,
-                'color': slice_df['_color'].tolist(),
+                'color': s_color.tolist(),
                 'opacity': 0.7,
             }
 
-            # Add stroke (line) for rainbow mode in NP
-            if mode == 'np' and rainbow_mode and '_stroke_color' in slice_df.columns:
+            if has_stroke:
                 marker_dict['line'] = {
-                    'color': slice_df['_stroke_color'].tolist(),
+                    'color': arr_stroke[mask].tolist(),
                     'width': 2,
                 }
 
+            # Build customdata as list of lists directly from numpy
+            s_cluster = arr_cluster[mask]
+            s_region = arr_region[mask]
+            s_full = arr_region_full[mask]
+
             all_traces.append({
                 'type': 'scattergl',
-                'x': slice_df['x'].tolist(),
-                'y': slice_df['y'].tolist(),
+                'x': s_x.tolist(),
+                'y': s_y.tolist(),
                 'mode': 'markers',
                 'marker': marker_dict,
                 'showlegend': False,
                 'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>',
-                'customdata': np.column_stack([
-                    slice_df['cluster'].values,
-                    slice_df['region_display'].values,
-                    slice_df['_region_full'].values,
-                ]).tolist(),
+                'customdata': np.column_stack([s_cluster, s_region, s_full]).tolist(),
                 'xaxis': xaxis,
                 'yaxis': yaxis,
             })
