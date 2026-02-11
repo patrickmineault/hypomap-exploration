@@ -139,8 +139,13 @@ def run_downsampling(
 
     print(f"Stratifying by: {stratify_cols}")
 
-    # Perform downsampling
-    downsampled = stratified_downsample(df, stratify_cols, target_n=target_n)
+    # Skip downsampling for mouse_abc datasets — display-time subsampling handles performance
+    if dataset.startswith("mouse_abc"):
+        print(f"Skipping downsampling for {dataset} (display-time subsampling is sufficient)")
+        downsampled = df
+    else:
+        # Perform downsampling
+        downsampled = stratified_downsample(df, stratify_cols, target_n=target_n)
 
     # Add 3D coordinates
     if assign_coords:
@@ -178,7 +183,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", "-d",
         default="mouse_hypomap",
-        choices=["mouse_hypomap", "human_hypomap", "mouse_abc"],
+        choices=["mouse_hypomap", "human_hypomap", "mouse_abc", "mouse_abc_subcortical"],
         help="Dataset to process (default: mouse_hypomap)"
     )
     parser.add_argument(
