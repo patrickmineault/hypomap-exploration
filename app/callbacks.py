@@ -411,7 +411,7 @@ def create_slice_figure(
                 }
 
             all_traces.append({
-                'type': 'scatter',
+                'type': 'scattergl',
                 'x': slice_df['x'].tolist(),
                 'y': slice_df['y'].tolist(),
                 'mode': 'markers',
