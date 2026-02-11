@@ -120,16 +120,13 @@ def create_slice_figure(
         # Map cluster to NT type (direct lookup is fast)
         cells_df['_nt_type'] = cells_df['cluster'].map(nt_mapping).fillna('NA')
 
-        # Subsample background; also cap foreground if total would be too large
+        # Subsample background only, keep all foreground cells
         foreground_mask = cells_df['_nt_type'] == nt_system
         foreground_df = cells_df[foreground_mask]
         background_df = cells_df[~foreground_mask]
 
         if subsample_pct < 100:
             background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
-            target_total = int(len(cells_df) * subsample_pct / 100)
-            if len(foreground_df) > target_total:
-                foreground_df = foreground_df.sample(n=target_total, random_state=42)
 
         # Background first, foreground last so active cells render on top
         cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
@@ -209,17 +206,13 @@ def create_slice_figure(
             else:
                 cells_df['_color'] = cells_df['cluster'].map(cluster_np_colors)
 
-            # Subsample background; also cap foreground if total would be too large
+            # Subsample background only, keep all foreground cells
             foreground_mask = cells_df['_legend_group'] != 'Neither'
             foreground_df = cells_df[foreground_mask]
             background_df = cells_df[~foreground_mask]
 
             if subsample_pct < 100:
                 background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
-                # Cap total points to keep payload manageable (~60k target)
-                target_total = int(len(cells_df) * subsample_pct / 100)
-                if len(foreground_df) > target_total:
-                    foreground_df = foreground_df.sample(n=target_total, random_state=42)
 
             cells_df = pd.concat([foreground_df, background_df], ignore_index=True)
 
@@ -297,16 +290,13 @@ def create_slice_figure(
 
             cells_df['_has_receptor'] = cells_df['cluster'].map(cluster_has_receptor)
 
-            # Subsample background; also cap foreground if total would be too large
+            # Subsample background only, keep all foreground cells
             foreground_mask = cells_df['_has_receptor'] == True
             foreground_df = cells_df[foreground_mask]
             background_df = cells_df[~foreground_mask]
 
             if subsample_pct < 100:
                 background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
-                target_total = int(len(cells_df) * subsample_pct / 100)
-                if len(foreground_df) > target_total:
-                    foreground_df = foreground_df.sample(n=target_total, random_state=42)
 
             # Background first, foreground last (so receptor-expressing cells render on top)
             cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
@@ -333,13 +323,16 @@ def create_slice_figure(
         cells_df = cells_df.iloc[sort_idx]
 
     # Extract numpy arrays once — avoids per-slice pandas indexing overhead
-    arr_x = cells_df['x'].values
-    arr_y = cells_df['y'].values
+    # Round coordinates to 3 decimal places to reduce JSON payload (~30% smaller)
+    arr_x = np.round(cells_df['x'].values, 3)
+    arr_y = np.round(cells_df['y'].values, 3)
     arr_z = cells_df['z_slice'].values
     arr_color = cells_df['_color'].values
     arr_cluster = cells_df['cluster'].values
     arr_region = cells_df['region_display'].values
     arr_region_full = np.array([region_full_name_map.get(r, r) for r in arr_region])
+    # Track which cells are background (for skipping hover customdata)
+    arr_is_bg = cells_df['_legend_group'].values == 'Neither' if '_legend_group' in cells_df.columns else np.zeros(len(cells_df), dtype=bool)
     has_stroke = mode == 'np' and rainbow_mode and '_stroke_color' in cells_df.columns
     arr_stroke = cells_df['_stroke_color'].values if has_stroke else None
 
@@ -396,36 +389,51 @@ def create_slice_figure(
             s_x = arr_x[mask]
             s_y = arr_y[mask]
             s_color = arr_color[mask]
+            s_bg = arr_is_bg[mask]
 
-            marker_dict = {
-                'size': point_size,
-                'color': s_color.tolist(),
-                'opacity': 0.7,
-            }
+            # Split into background (no hover) and foreground (with hover) traces
+            # to avoid sending customdata for gray background cells (~50% payload savings)
+            for is_bg_trace in ([True, False] if s_bg.any() and (~s_bg).any() else
+                                [True] if s_bg.all() else [False]):
+                if is_bg_trace:
+                    tmask = s_bg
+                else:
+                    tmask = ~s_bg
 
-            if has_stroke:
-                marker_dict['line'] = {
-                    'color': arr_stroke[mask].tolist(),
-                    'width': 2,
+                t_color = s_color[tmask]
+                marker_dict = {
+                    'size': point_size,
+                    'color': t_color.tolist(),
+                    'opacity': 0.7,
                 }
 
-            # Build customdata as list of lists directly from numpy
-            s_cluster = arr_cluster[mask]
-            s_region = arr_region[mask]
-            s_full = arr_region_full[mask]
+                if has_stroke and not is_bg_trace:
+                    marker_dict['line'] = {
+                        'color': arr_stroke[mask][tmask].tolist(),
+                        'width': 2,
+                    }
 
-            all_traces.append({
-                'type': 'scattergl',
-                'x': s_x.tolist(),
-                'y': s_y.tolist(),
-                'mode': 'markers',
-                'marker': marker_dict,
-                'showlegend': False,
-                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>',
-                'customdata': np.column_stack([s_cluster, s_region, s_full]).tolist(),
-                'xaxis': xaxis,
-                'yaxis': yaxis,
-            })
+                trace = {
+                    'type': 'scattergl',
+                    'x': s_x[tmask].tolist(),
+                    'y': s_y[tmask].tolist(),
+                    'mode': 'markers',
+                    'marker': marker_dict,
+                    'showlegend': False,
+                    'xaxis': xaxis,
+                    'yaxis': yaxis,
+                }
+
+                if is_bg_trace:
+                    trace['hoverinfo'] = 'skip'
+                else:
+                    trace['hovertemplate'] = '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>'
+                    s_cluster = arr_cluster[mask][tmask]
+                    s_region = arr_region[mask][tmask]
+                    s_full = arr_region_full[mask][tmask]
+                    trace['customdata'] = np.column_stack([s_cluster, s_region, s_full]).tolist()
+
+                all_traces.append(trace)
 
         # Collect annotations
         if show_labels and z_slice in region_centroids:
