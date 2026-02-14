@@ -162,3 +162,14 @@ hr {
     border-color: rgba(0, 0, 0, 0.08) !important;
     margin: 1rem 0 !important;
 }
+
+/* Region chip styling */
+.region-chip {
+    transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.region-chip:hover {
+    background-color: #22c55e !important;
+    color: white !important;
+    transform: scale(1.05);
+}
