@@ -1,14 +1,15 @@
 """Stratified downsampling of HypoMap cell data."""
 
 import argparse
-import pandas as pd
+import sys
 from pathlib import Path
 from typing import Optional
 
-import sys
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.datasets import get_config, detect_cell_type_levels, detect_region_column
+from hypomap.datasets import detect_cell_type_levels, detect_region_column, get_config
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
@@ -102,7 +103,7 @@ def run_downsampling(
     if not metadata_path.exists():
         raise FileNotFoundError(
             f"Run extraction first for {dataset}:\n"
-            f"  python -m src.datasets.{dataset}"
+            f"  python -m hypomap.datasets.{dataset}"
         )
 
     print(f"Loading {dataset} metadata from {metadata_path}")
@@ -150,7 +151,7 @@ def run_downsampling(
     # Add 3D coordinates
     if assign_coords:
         print("\nAssigning 3D coordinates...")
-        from src.preprocessing.assign_coordinates import assign_coordinates
+        from hypomap.preprocessing.assign_coordinates import assign_coordinates
         downsampled = assign_coordinates(downsampled, dataset=dataset, region_col=region_col)
     else:
         print("Skipping coordinate assignment")
@@ -209,4 +210,5 @@ if __name__ == "__main__":
         cell_type_level=args.cell_type_level,
         target_n=args.target,
         assign_coords=not args.no_coords,
+    )
     )

@@ -72,7 +72,7 @@ hypomap/
 │   ├── app.py          # Main Dash application
 │   ├── callbacks.py    # Interactive callbacks
 │   └── layouts.py      # UI layout components
-├── src/
+├── hypomap/
 │   ├── datasets/       # Dataset loaders
 │   ├── preprocessing/  # Data extraction & processing
 │   └── atlas/          # Allen Brain Atlas integration

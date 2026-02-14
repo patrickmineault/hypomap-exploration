@@ -5,10 +5,10 @@ and hormone ligands/receptors, then aggregates by cluster to create expression p
 
 Usage:
     # Using measured MERFISH panel (subset of genes):
-    python -m src.preprocessing.build_cluster_ligand_receptor_map
+    python -m hypomap.preprocessing.build_cluster_ligand_receptor_map
 
     # Using imputed data (all genes, ~50GB download):
-    python -m src.preprocessing.build_cluster_ligand_receptor_map --use-imputed
+    python -m hypomap.preprocessing.build_cluster_ligand_receptor_map --use-imputed
 """
 
 import argparse

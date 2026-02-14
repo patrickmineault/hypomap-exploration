@@ -7,14 +7,15 @@ For each (cluster, NP system) pair, precomputes:
 This reduces per-request lookup from O(clusters × genes) to O(clusters).
 
 Usage:
-    python -m src.preprocessing.build_cluster_np_expression
-    python -m src.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_subcortical
+    python -m hypomap.preprocessing.build_cluster_np_expression
+    python -m hypomap.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_subcortical
 """
 
 import argparse
 from pathlib import Path
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
@@ -26,25 +27,25 @@ def load_np_systems():
     df = pd.read_csv(NP_MAP_PATH)
 
     systems = {}
-    for system in df['System'].unique():
-        system_df = df[df['System'] == system]
+    for system in df["System"].unique():
+        system_df = df[df["System"] == system]
 
         # Ligands: simple set of genes
         ligand_genes = set()
-        for lg in system_df['Ligand_Gene'].dropna().unique():
-            for g in lg.split(';'):
+        for lg in system_df["Ligand_Gene"].dropna().unique():
+            for g in lg.split(";"):
                 ligand_genes.add(g.strip())
 
         # Receptors: list of tuples for AND logic (heterodimer complexes)
         receptor_complexes = []
-        for rg in system_df['Receptor_Gene'].dropna().unique():
-            genes = tuple(g.strip() for g in rg.split(';'))
+        for rg in system_df["Receptor_Gene"].dropna().unique():
+            genes = tuple(g.strip() for g in rg.split(";"))
             if genes not in receptor_complexes:
                 receptor_complexes.append(genes)
 
         systems[system] = {
-            'ligands': list(ligand_genes),
-            'receptors': receptor_complexes,
+            "ligands": list(ligand_genes),
+            "receptors": receptor_complexes,
         }
 
     return systems
@@ -57,11 +58,11 @@ def load_cluster_expression(profile_path):
     # Pivot to cluster -> gene -> mean_expr
     cluster_expr = {}
     for _, row in df.iterrows():
-        cluster = row['cluster']
-        gene = row['gene']
+        cluster = row["cluster"]
+        gene = row["gene"]
         if cluster not in cluster_expr:
             cluster_expr[cluster] = {}
-        cluster_expr[cluster][gene] = float(row['mean_expr'])
+        cluster_expr[cluster][gene] = float(row["mean_expr"])
 
     return cluster_expr
 
@@ -74,8 +75,8 @@ def compute_cluster_system_expression(clusters, systems, cluster_expr):
         expr = cluster_expr.get(cluster, {})
 
         for system_name, system_info in systems.items():
-            ligand_genes = system_info['ligands']
-            receptor_complexes = system_info['receptors']
+            ligand_genes = system_info["ligands"]
+            receptor_complexes = system_info["receptors"]
 
             # Max ligand expression (any ligand gene above 0)
             max_ligand = 0.0
@@ -99,12 +100,14 @@ def compute_cluster_system_expression(clusters, systems, cluster_expr):
                 if all_present and complex_exprs:
                     max_receptor = max(max_receptor, min(complex_exprs))
 
-            rows.append({
-                'cluster': cluster,
-                'system': system_name,
-                'max_ligand_expr': max_ligand,
-                'max_receptor_expr': max_receptor,
-            })
+            rows.append(
+                {
+                    "cluster": cluster,
+                    "system": system_name,
+                    "max_ligand_expr": max_ligand,
+                    "max_receptor_expr": max_receptor,
+                }
+            )
 
     return pd.DataFrame(rows)
 
@@ -131,13 +134,17 @@ def main(metadata_dir=None):
     # Compute lookup table
     print("\nComputing cluster-system expression matrix...")
     df = compute_cluster_system_expression(clusters, systems, cluster_expr)
-    print(f"  Generated {len(df)} rows ({len(clusters)} clusters × {len(systems)} systems)")
+    print(
+        f"  Generated {len(df)} rows ({len(clusters)} clusters × {len(systems)} systems)"
+    )
 
     # Summary stats
-    expressing_ligand = df[df['max_ligand_expr'] > 0]
-    expressing_receptor = df[df['max_receptor_expr'] > 0]
+    expressing_ligand = df[df["max_ligand_expr"] > 0]
+    expressing_receptor = df[df["max_receptor_expr"] > 0]
     print(f"  Cluster-system pairs with ligand expression: {len(expressing_ligand)}")
-    print(f"  Cluster-system pairs with receptor expression: {len(expressing_receptor)}")
+    print(
+        f"  Cluster-system pairs with receptor expression: {len(expressing_receptor)}"
+    )
 
     # Save
     df.to_parquet(output_path, index=False)
@@ -155,4 +162,5 @@ if __name__ == "__main__":
         help="Directory with cluster_ligand_receptor_profile.parquet (default: data/processed/mouse_abc)",
     )
     args = parser.parse_args()
+    main(metadata_dir=args.metadata_dir)
     main(metadata_dir=args.metadata_dir)

@@ -12,8 +12,8 @@ The app is built with Dash/Plotly and allows interactive exploration of cell typ
 
 - `data/raw/` - Original h5ad files and Visium data (not in git)
 - `data/processed/` - Parquet files ready for visualization
-- `src/datasets/` - Dataset loaders (mouse.py, human.py)
-- `src/preprocessing/` - Data processing scripts
+- `hypomap/datasets/` - Dataset loaders (mouse.py, human.py)
+- `hypomap/preprocessing/` - Data processing scripts
 - `app/` - Dash application
 
 ## Environment

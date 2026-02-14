@@ -32,7 +32,7 @@ rule extract_mouse_abc_metadata:
         metadata="data/processed/mouse_abc/cell_metadata.parquet",
         genes="data/processed/mouse_abc/genes.parquet"
     shell:
-        "python -m src.datasets.mouse_abc"
+        "python -m hypomap.datasets.mouse_abc"
 
 rule downsample_mouse_abc:
     """Downsample mouse ABC cells (already have CCF coordinates)."""
@@ -41,7 +41,7 @@ rule downsample_mouse_abc:
     output:
         "data/processed/mouse_abc/cells_with_coords.parquet"
     shell:
-        "python -m src.preprocessing.downsample --dataset mouse_abc"
+        "python -m hypomap.preprocessing.downsample --dataset mouse_abc"
 
 rule build_cluster_ligand_receptor_map:
     """Map neuropeptide and hormone ligand/receptor expression to ABC clusters."""
@@ -53,7 +53,7 @@ rule build_cluster_ligand_receptor_map:
         expression="data/processed/mouse_abc/neuropeptide_expression.parquet",
         profiles="data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet"
     shell:
-        "python -m src.preprocessing.build_cluster_ligand_receptor_map --use-imputed"
+        "python -m hypomap.preprocessing.build_cluster_ligand_receptor_map --use-imputed"
 
 rule build_lateralized_regions:
     """Precompute lateralized region boundaries for coronal atlas app."""
@@ -62,7 +62,7 @@ rule build_lateralized_regions:
     output:
         "data/processed/mouse_abc/coronal_atlas_regions.json"
     shell:
-        "python -m src.preprocessing.build_lateralized_regions"
+        "python -m hypomap.preprocessing.build_lateralized_regions"
 
 rule build_cluster_np_expression:
     """Precompute cluster-system expression lookup for fast NP mode."""
@@ -72,7 +72,7 @@ rule build_cluster_np_expression:
     output:
         "data/processed/mouse_abc/cluster_np_expression.parquet"
     shell:
-        "python -m src.preprocessing.build_cluster_np_expression"
+        "python -m hypomap.preprocessing.build_cluster_np_expression"
 
 rule extract_hypothalamus_connectivity:
     """Download hypothalamus connectivity from Allen Brain Connectivity Atlas."""
@@ -81,7 +81,7 @@ rule extract_hypothalamus_connectivity:
         summary="data/processed/mouse_common/hypothalamus_connectivity_summary.csv",
         structures="data/processed/mouse_common/hypothalamus_structures.csv"
     shell:
-        "python -m src.preprocessing.extract_hypothalamus_connectivity"
+        "python -m hypomap.preprocessing.extract_hypothalamus_connectivity"
 
 # =============================================================================
 # Mouse ABC Subcortical (HY + TH + STR + PAL) Pipeline
@@ -93,7 +93,7 @@ rule extract_mouse_abc_subcortical_metadata:
         metadata="data/processed/mouse_abc_subcortical/cell_metadata.parquet",
         genes="data/processed/mouse_abc_subcortical/genes.parquet"
     shell:
-        "python -m src.datasets.mouse_abc --divisions HY TH STR PAL --output-dir data/processed/mouse_abc_subcortical"
+        "python -m hypomap.datasets.mouse_abc --divisions HY TH STR PAL --output-dir data/processed/mouse_abc_subcortical"
 
 rule downsample_mouse_abc_subcortical:
     """Downsample mouse ABC subcortical cells."""
@@ -102,7 +102,7 @@ rule downsample_mouse_abc_subcortical:
     output:
         "data/processed/mouse_abc_subcortical/cells_with_coords.parquet"
     shell:
-        "python -m src.preprocessing.downsample --dataset mouse_abc_subcortical"
+        "python -m hypomap.preprocessing.downsample --dataset mouse_abc_subcortical"
 
 rule build_lateralized_regions_subcortical:
     """Precompute lateralized region boundaries for subcortical coronal atlas."""
@@ -111,7 +111,7 @@ rule build_lateralized_regions_subcortical:
     output:
         "data/processed/mouse_abc_subcortical/coronal_atlas_regions.json"
     shell:
-        "python -m src.preprocessing.build_lateralized_regions --input data/processed/mouse_abc_subcortical/cells_with_coords.parquet --output data/processed/mouse_abc_subcortical/coronal_atlas_regions.json"
+        "python -m hypomap.preprocessing.build_lateralized_regions --input data/processed/mouse_abc_subcortical/cells_with_coords.parquet --output data/processed/mouse_abc_subcortical/coronal_atlas_regions.json"
 
 rule build_cluster_ligand_receptor_map_subcortical:
     """Map neuropeptide and hormone ligand/receptor expression for subcortical clusters."""
@@ -123,7 +123,7 @@ rule build_cluster_ligand_receptor_map_subcortical:
         expression="data/processed/mouse_abc_subcortical/neuropeptide_expression.parquet",
         profiles="data/processed/mouse_abc_subcortical/cluster_ligand_receptor_profile.parquet"
     shell:
-        "python -m src.preprocessing.build_cluster_ligand_receptor_map --use-imputed --metadata-dir data/processed/mouse_abc_subcortical"
+        "python -m hypomap.preprocessing.build_cluster_ligand_receptor_map --use-imputed --metadata-dir data/processed/mouse_abc_subcortical"
 
 rule build_cluster_np_expression_subcortical:
     """Precompute cluster-system expression lookup for subcortical NP mode."""
@@ -133,7 +133,7 @@ rule build_cluster_np_expression_subcortical:
     output:
         "data/processed/mouse_abc_subcortical/cluster_np_expression.parquet"
     shell:
-        "python -m src.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_subcortical"
+        "python -m hypomap.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_subcortical"
 
 # =============================================================================
 # Dash app

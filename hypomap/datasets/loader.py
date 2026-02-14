@@ -1,7 +1,8 @@
 """Unified data loading interface for HypoMap datasets."""
 
+from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
-from typing import Tuple, List, Optional, Dict
 
 from .base import DatasetConfig
 from .mouse_abc import get_mouse_abc_config, get_mouse_abc_subcortical_config
@@ -15,12 +16,14 @@ DATASETS = {
 # Optional datasets (modules may not exist)
 try:
     from .mouse_hypomap import get_mouse_hypomap_config
+
     DATASETS["mouse_hypomap"] = get_mouse_hypomap_config
 except ImportError:
     pass
 
 try:
     from .human_hypomap import get_human_hypomap_config
+
     DATASETS["human_hypomap"] = get_human_hypomap_config
 except ImportError:
     pass
@@ -69,7 +72,7 @@ def load_dataset(name: str) -> Tuple[pd.DataFrame, DatasetConfig]:
     if not config.cells_with_coords_path.exists():
         raise FileNotFoundError(
             f"Processed data not found for {name} at {config.cells_with_coords_path}\n"
-            f"Run preprocessing first: python -m src.datasets.{name}"
+            f"Run preprocessing first: python -m hypomap.datasets.{name}"
         )
 
     cells_df = pd.read_parquet(config.cells_with_coords_path)
@@ -111,7 +114,7 @@ def get_gene_list(name: str) -> List[str]:
         raise FileNotFoundError(f"Gene list not found for {name}")
 
     genes_df = pd.read_parquet(config.genes_path)
-    return genes_df['gene'].tolist()
+    return genes_df["gene"].tolist()
 
 
 def get_marker_genes(name: str) -> List[str]:
@@ -163,14 +166,16 @@ def detect_cell_type_levels(cells_df: pd.DataFrame) -> List[str]:
         List of cell type column names, sorted by hierarchy level
     """
     # Check for ABC-style columns first (class, subclass, supertype, cluster)
-    abc_cols = ['class', 'subclass', 'supertype', 'cluster']
+    abc_cols = ["class", "subclass", "supertype", "cluster"]
     abc_found = [col for col in abc_cols if col in cells_df.columns]
     if abc_found:
         return abc_found
 
     # Fall back to HypoMap-style columns (C7_named, C66_named, etc.)
-    cell_type_cols = [col for col in cells_df.columns if col.startswith('C') and '_named' in col]
-    cell_type_cols = sorted(cell_type_cols, key=lambda x: int(x.split('_')[0][1:]))
+    cell_type_cols = [
+        col for col in cells_df.columns if col.startswith("C") and "_named" in col
+    ]
+    cell_type_cols = sorted(cell_type_cols, key=lambda x: int(x.split("_")[0][1:]))
     return cell_type_cols
 
 
@@ -184,11 +189,12 @@ def detect_region_column(cells_df: pd.DataFrame) -> Optional[str]:
         Name of region column, or None if not found
     """
     # Check for exact matches first
-    if 'region' in cells_df.columns:
-        return 'region'
-    if 'Region' in cells_df.columns:
-        return 'Region'
+    if "region" in cells_df.columns:
+        return "region"
+    if "Region" in cells_df.columns:
+        return "Region"
 
     # Fall back to pattern matching
-    region_cols = [col for col in cells_df.columns if 'region' in col.lower()]
+    region_cols = [col for col in cells_df.columns if "region" in col.lower()]
+    return region_cols[0] if region_cols else None
     return region_cols[0] if region_cols else None
