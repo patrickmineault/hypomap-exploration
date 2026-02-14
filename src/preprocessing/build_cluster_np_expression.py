@@ -8,16 +8,17 @@ This reduces per-request lookup from O(clusters × genes) to O(clusters).
 
 Usage:
     python -m src.preprocessing.build_cluster_np_expression
+    python -m src.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_subcortical
 """
 
+import argparse
 from pathlib import Path
 import pandas as pd
 import numpy as np
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
-CLUSTER_LR_PROFILE_PATH = DATA_DIR / "processed" / "mouse_abc" / "cluster_ligand_receptor_profile.parquet"
-OUTPUT_PATH = DATA_DIR / "processed" / "mouse_abc" / "cluster_np_expression.parquet"
+DEFAULT_METADATA_DIR = DATA_DIR / "processed" / "mouse_abc"
 
 
 def load_np_systems():
@@ -49,9 +50,9 @@ def load_np_systems():
     return systems
 
 
-def load_cluster_expression():
+def load_cluster_expression(profile_path):
     """Load cluster-level gene expression data."""
-    df = pd.read_parquet(CLUSTER_LR_PROFILE_PATH)
+    df = pd.read_parquet(profile_path)
 
     # Pivot to cluster -> gene -> mean_expr
     cluster_expr = {}
@@ -108,7 +109,13 @@ def compute_cluster_system_expression(clusters, systems, cluster_expr):
     return pd.DataFrame(rows)
 
 
-def main():
+def main(metadata_dir=None):
+    if metadata_dir is None:
+        metadata_dir = DEFAULT_METADATA_DIR
+
+    profile_path = metadata_dir / "cluster_ligand_receptor_profile.parquet"
+    output_path = metadata_dir / "cluster_np_expression.parquet"
+
     print("=== Building Cluster NP Expression Lookup ===\n")
 
     # Load data
@@ -116,8 +123,8 @@ def main():
     systems = load_np_systems()
     print(f"  {len(systems)} NP systems")
 
-    print("Loading cluster expression...")
-    cluster_expr = load_cluster_expression()
+    print(f"Loading cluster expression from {profile_path}...")
+    cluster_expr = load_cluster_expression(profile_path)
     clusters = sorted(cluster_expr.keys())
     print(f"  {len(clusters)} clusters")
 
@@ -133,9 +140,19 @@ def main():
     print(f"  Cluster-system pairs with receptor expression: {len(expressing_receptor)}")
 
     # Save
-    df.to_parquet(OUTPUT_PATH, index=False)
-    print(f"\nSaved to {OUTPUT_PATH}")
+    df.to_parquet(output_path, index=False)
+    print(f"\nSaved to {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Precompute cluster-level NP system expression for fast app lookups."
+    )
+    parser.add_argument(
+        "--metadata-dir",
+        type=Path,
+        default=None,
+        help="Directory with cluster_ligand_receptor_profile.parquet (default: data/processed/mouse_abc)",
+    )
+    args = parser.parse_args()
+    main(metadata_dir=args.metadata_dir)

@@ -4,17 +4,26 @@ import pandas as pd
 from typing import Tuple, List, Optional, Dict
 
 from .base import DatasetConfig
-from .mouse_hypomap import get_mouse_hypomap_config
-from .human_hypomap import get_human_hypomap_config
-from .mouse_abc import get_mouse_abc_config
-
+from .mouse_abc import get_mouse_abc_config, get_mouse_abc_subcortical_config
 
 # Registry of available datasets
 DATASETS = {
-    "mouse_hypomap": get_mouse_hypomap_config,
-    "human_hypomap": get_human_hypomap_config,
     "mouse_abc": get_mouse_abc_config,
+    "mouse_abc_subcortical": get_mouse_abc_subcortical_config,
 }
+
+# Optional datasets (modules may not exist)
+try:
+    from .mouse_hypomap import get_mouse_hypomap_config
+    DATASETS["mouse_hypomap"] = get_mouse_hypomap_config
+except ImportError:
+    pass
+
+try:
+    from .human_hypomap import get_human_hypomap_config
+    DATASETS["human_hypomap"] = get_human_hypomap_config
+except ImportError:
+    pass
 
 
 def get_available_datasets() -> List[str]:

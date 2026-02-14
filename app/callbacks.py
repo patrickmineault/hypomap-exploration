@@ -100,239 +100,225 @@ def create_slice_figure(
     else:
         unique_categories = []
 
-    # Precompute cell colors based on mode
-    if mode == 'cluster':
-        # Subsample all cells for cluster mode
-        if subsample_pct < 100:
-            cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
+    # Extract raw arrays from cells_df (zero-copy views — no df.copy() needed).
+    # All mode-specific logic operates on numpy arrays instead of adding columns to
+    # a copied DataFrame, eliminating the ~0.5s pandas copy + consolidation overhead.
+    n_cells = len(cells_df)
+    raw_x = cells_df['x'].values
+    raw_y = cells_df['y'].values
+    raw_z_slice = cells_df['z_slice'].values
+    raw_cluster = cells_df['cluster'].values
+    raw_region_display = cells_df['region_display'].values
 
-        # Color by cluster level
+    # Each mode computes:
+    #   color_arr  — per-cell color (full size, before subsampling)
+    #   keep_idx   — indices to retain after fg/bg subsampling
+    #   stroke_arr — per-cell stroke color (rainbow NP mode only)
+    #   legend_arr — per-cell legend group (NP mode only, for sort + diffusion)
+    stroke_arr = None
+    legend_arr = None
+
+    if mode == 'cluster':
+        # Subsample all cells uniformly
+        if subsample_pct < 100:
+            n_keep = max(1, int(n_cells * subsample_pct / 100))
+            keep_idx = np.random.RandomState(42).choice(n_cells, size=n_keep, replace=False)
+        else:
+            keep_idx = np.arange(n_cells)
+
+        raw_ct = cells_df[cluster_level].values
         color_map = {cat: get_color_for_category(unique_categories, cat)
                      for cat in unique_categories}
-        cells_df = cells_df.copy()
-        cells_df['_color'] = cells_df[cluster_level].map(color_map).fillna('#808080')
-        cells_df['_legend_group'] = cells_df[cluster_level]
+        color_arr = np.array([color_map.get(c, '#808080') for c in raw_ct])
 
     elif mode == 'nt':
-        # Gray all cells, black for selected NT type
-        cells_df = cells_df.copy()
+        # Map cluster to NT type via dict lookup on numpy array
+        nt_type_arr = np.array([nt_mapping.get(c, 'NA') for c in raw_cluster])
+        fg_mask = nt_type_arr == nt_system
+        fg_idx = np.where(fg_mask)[0]
+        bg_idx = np.where(~fg_mask)[0]
 
-        # Map cluster to NT type (direct lookup is fast)
-        cells_df['_nt_type'] = cells_df['cluster'].map(nt_mapping).fillna('NA')
+        if subsample_pct < 100 and len(bg_idx) > 0:
+            n_bg = max(1, int(len(bg_idx) * subsample_pct / 100))
+            bg_idx = np.random.RandomState(42).choice(bg_idx, size=n_bg, replace=False)
 
-        # Subsample background only, keep all foreground cells
-        foreground_mask = cells_df['_nt_type'] == nt_system
-        foreground_df = cells_df[foreground_mask]
-        background_df = cells_df[~foreground_mask]
-
-        if subsample_pct < 100:
-            background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
-
-        # Background first, foreground last so active cells render on top
-        cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
-
-        cells_df['_color'] = np.where(
-            cells_df['_nt_type'] == nt_system,
-            '#000000',  # Black for selected
-            '#D3D3D3'   # Light gray for others
-        )
-        cells_df['_legend_group'] = np.where(
-            cells_df['_nt_type'] == nt_system,
-            nt_system,
-            'Other'
-        )
+        # Background first, foreground last (fg renders on top)
+        keep_idx = np.concatenate([bg_idx, fg_idx])
+        color_arr = np.where(fg_mask, '#000000', '#D3D3D3')
 
     elif mode == 'np':
-        # Color by neuropeptide system expression using precomputed lookup
-        cells_df = cells_df.copy()
-
-        # For rainbow mode, precompute cluster colors
-        if rainbow_mode:
-            unique_clusters_all = sorted(cells_df['cluster'].dropna().unique())
-            cluster_fill_colors = {cat: get_color_for_category(unique_clusters_all, cat)
-                                   for cat in unique_clusters_all}
-
         if np_system and np_system in cluster_np_expression:
-            # Use precomputed cluster-system expression lookup
             system_lookup = cluster_np_expression[np_system]
 
-            def get_np_color_group(cluster_name):
-                """Get color and legend group for a cluster based on expression."""
-                if cluster_name not in system_lookup:
-                    return '#D3D3D3', 'Neither'
-
-                ligand_expr, receptor_expr = system_lookup[cluster_name]
-
-                # Apply threshold filter
+            # Precompute per-cluster color and legend group
+            unique_clusters = np.unique(raw_cluster)
+            cluster_np_colors = {}
+            cluster_groups = {}
+            for c in unique_clusters:
+                if c not in system_lookup:
+                    cluster_np_colors[c] = '#D3D3D3'
+                    cluster_groups[c] = 'Neither'
+                    continue
+                ligand_expr, receptor_expr = system_lookup[c]
                 ligand_above = ligand_expr >= threshold
                 receptor_above = receptor_expr >= threshold
-
                 if ligand_above and receptor_above:
-                    # Both - blend to purple, intensity by average
                     intensity = min(1.0, (ligand_expr + receptor_expr) / 10)
                     r = int(128 + 127 * intensity)
                     b = int(128 + 127 * intensity)
-                    return f'rgb({r}, 0, {b})', 'Both'
+                    cluster_np_colors[c] = f'rgb({r}, 0, {b})'
+                    cluster_groups[c] = 'Both'
                 elif ligand_above:
-                    # Red for ligand
                     intensity = min(1.0, ligand_expr / 5)
                     r = int(100 + 155 * intensity)
-                    return f'rgb({r}, 50, 50)', 'Ligand'
+                    cluster_np_colors[c] = f'rgb({r}, 50, 50)'
+                    cluster_groups[c] = 'Ligand'
                 elif receptor_above:
-                    # Blue for receptor
                     intensity = min(1.0, receptor_expr / 5)
                     b = int(100 + 155 * intensity)
-                    return f'rgb(50, 50, {b})', 'Receptor'
+                    cluster_np_colors[c] = f'rgb(50, 50, {b})'
+                    cluster_groups[c] = 'Receptor'
                 else:
-                    return '#D3D3D3', 'Neither'
+                    cluster_np_colors[c] = '#D3D3D3'
+                    cluster_groups[c] = 'Neither'
 
-            # Precompute per-cluster, then map to cells
-            unique_clusters = cells_df['cluster'].unique()
-            cluster_np_colors = {c: get_np_color_group(c)[0] for c in unique_clusters}
-            cluster_groups = {c: get_np_color_group(c)[1] for c in unique_clusters}
-
-            cells_df['_legend_group'] = cells_df['cluster'].map(cluster_groups)
+            legend_arr = np.array([cluster_groups.get(c, 'Neither') for c in raw_cluster])
 
             if rainbow_mode:
-                # Stroke = NP color, Fill = cluster color (gray for Neither)
-                cells_df['_stroke_color'] = cells_df['cluster'].map(cluster_np_colors)
-                # Fill with cluster color only for expressing cells, gray for non-expressing
-                cells_df['_color'] = cells_df.apply(
-                    lambda row: cluster_fill_colors.get(row['cluster'], '#D3D3D3')
-                    if cluster_groups.get(row['cluster'], 'Neither') != 'Neither'
-                    else '#D3D3D3',
-                    axis=1
-                )
+                unique_clusters_all = sorted(unique_clusters)
+                cluster_fill_colors = {cat: get_color_for_category(unique_clusters_all, cat)
+                                       for cat in unique_clusters_all}
+                stroke_arr = np.array([cluster_np_colors.get(c, '#D3D3D3') for c in raw_cluster])
+                color_arr = np.array([
+                    cluster_fill_colors.get(c, '#D3D3D3')
+                    if cluster_groups.get(c, 'Neither') != 'Neither'
+                    else '#D3D3D3'
+                    for c in raw_cluster
+                ])
             else:
-                cells_df['_color'] = cells_df['cluster'].map(cluster_np_colors)
+                color_arr = np.array([cluster_np_colors.get(c, '#D3D3D3') for c in raw_cluster])
 
-            # Subsample background only, keep all foreground cells
-            foreground_mask = cells_df['_legend_group'] != 'Neither'
-            foreground_df = cells_df[foreground_mask]
-            background_df = cells_df[~foreground_mask]
+            # fg/bg split — keep all foreground, subsample background
+            fg_mask = legend_arr != 'Neither'
+            fg_idx = np.where(fg_mask)[0]
+            bg_idx = np.where(~fg_mask)[0]
 
-            if subsample_pct < 100:
-                background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
+            if subsample_pct < 100 and len(bg_idx) > 0:
+                n_bg = max(1, int(len(bg_idx) * subsample_pct / 100))
+                bg_idx = np.random.RandomState(42).choice(bg_idx, size=n_bg, replace=False)
 
-            cells_df = pd.concat([foreground_df, background_df], ignore_index=True)
-
-            # Apply diffusion range filter if enabled
-            if 'enabled' in (diffusion_enabled or []):
-                # Z-axis scaling factor for anisotropic distance
-                # Gives Z an extra 0.15mm range compared to XY (for slice thickness)
-                z_extra = 0.15  # mm
-                z_scale = diffusion_range / (diffusion_range + z_extra)
-
-                # Get ligand cell coordinates (include 'Both' as ligand sources)
-                ligand_mask = cells_df['_legend_group'].isin(['Ligand', 'Both'])
-                ligand_cells = cells_df[ligand_mask]
-
-                if len(ligand_cells) > 0:
-                    # Build scaled coordinates for KD-tree
-                    ligand_coords = np.column_stack([
-                        ligand_cells['x'].values,
-                        ligand_cells['y'].values,
-                        ligand_cells['z'].values * z_scale
-                    ])
-                    tree = cKDTree(ligand_coords)
-
-                    # Query receptor cells
-                    receptor_mask = cells_df['_legend_group'] == 'Receptor'
-
-                    if receptor_mask.sum() > 0:
-                        receptor_indices = cells_df.index[receptor_mask]
-                        receptor_coords = np.column_stack([
-                            cells_df.loc[receptor_indices, 'x'].values,
-                            cells_df.loc[receptor_indices, 'y'].values,
-                            cells_df.loc[receptor_indices, 'z'].values * z_scale
-                        ])
-
-                        # Find distance to nearest ligand source
-                        distances, _ = tree.query(receptor_coords)
-
-                        # Classify receptors as within or outside range
-                        within_range = distances <= diffusion_range
-
-                        # Update colors and legend groups
-                        # In rainbow mode, update stroke color; otherwise update fill color
-                        color_col = '_stroke_color' if rainbow_mode else '_color'
-                        cells_df.loc[receptor_indices[within_range], color_col] = '#4169E1'  # Blue - in range
-                        cells_df.loc[receptor_indices[within_range], '_legend_group'] = 'Receptor (in range)'
-                        cells_df.loc[receptor_indices[~within_range], color_col] = '#40E0D0'  # Turquoise - out of range
-                        cells_df.loc[receptor_indices[~within_range], '_legend_group'] = 'Receptor (out of range)'
-
+            keep_idx = np.concatenate([fg_idx, bg_idx])
         else:
             if subsample_pct < 100:
-                cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
-            cells_df['_color'] = '#D3D3D3'
-            cells_df['_legend_group'] = 'NA'
+                n_keep = max(1, int(n_cells * subsample_pct / 100))
+                keep_idx = np.random.RandomState(42).choice(n_cells, size=n_keep, replace=False)
+            else:
+                keep_idx = np.arange(n_cells)
+            color_arr = np.full(n_cells, '#D3D3D3')
+            legend_arr = np.full(n_cells, 'NA')
 
     elif mode == 'hormone':
-        # Color by hormone receptor expression
-        cells_df = cells_df.copy()
-
         if hormone_system and hormone_system in hormone_systems:
             receptor_genes = hormone_systems[hormone_system]['receptors']
 
-            # Check each cluster for receptor expression
-            def has_receptor_expression(cluster_name):
-                if cluster_name not in cluster_expression:
-                    return False
-                cluster_genes = cluster_expression[cluster_name]
-                for gene in receptor_genes:
-                    if gene in cluster_genes and cluster_genes[gene]['mean_expr'] >= threshold:
-                        return True
-                return False
+            unique_clusters = np.unique(raw_cluster)
+            cluster_has_receptor = {}
+            for c in unique_clusters:
+                if c not in cluster_expression:
+                    cluster_has_receptor[c] = False
+                    continue
+                cluster_genes = cluster_expression[c]
+                cluster_has_receptor[c] = any(
+                    gene in cluster_genes and cluster_genes[gene]['mean_expr'] >= threshold
+                    for gene in receptor_genes
+                )
 
-            # Precompute per-cluster
-            unique_clusters = cells_df['cluster'].unique()
-            cluster_has_receptor = {c: has_receptor_expression(c) for c in unique_clusters}
+            receptor_mask = np.array([cluster_has_receptor.get(c, False) for c in raw_cluster])
+            fg_idx = np.where(receptor_mask)[0]
+            bg_idx = np.where(~receptor_mask)[0]
 
-            cells_df['_has_receptor'] = cells_df['cluster'].map(cluster_has_receptor)
+            if subsample_pct < 100 and len(bg_idx) > 0:
+                n_bg = max(1, int(len(bg_idx) * subsample_pct / 100))
+                bg_idx = np.random.RandomState(42).choice(bg_idx, size=n_bg, replace=False)
 
-            # Subsample background only, keep all foreground cells
-            foreground_mask = cells_df['_has_receptor'] == True
-            foreground_df = cells_df[foreground_mask]
-            background_df = cells_df[~foreground_mask]
-
-            if subsample_pct < 100:
-                background_df = background_df.sample(frac=subsample_pct / 100, random_state=42)
-
-            # Background first, foreground last (so receptor-expressing cells render on top)
-            cells_df = pd.concat([background_df, foreground_df], ignore_index=True)
-
-            # Color: black for expressing, gray for others
-            cells_df['_color'] = np.where(cells_df['_has_receptor'], '#000000', '#D3D3D3')
-            cells_df['_legend_group'] = np.where(cells_df['_has_receptor'], hormone_system, 'Other')
+            # Background first, foreground last
+            keep_idx = np.concatenate([bg_idx, fg_idx])
+            color_arr = np.where(receptor_mask, '#000000', '#D3D3D3')
         else:
             if subsample_pct < 100:
-                cells_df = cells_df.sample(frac=subsample_pct / 100, random_state=42)
-            cells_df['_color'] = '#D3D3D3'
-            cells_df['_legend_group'] = 'NA'
+                n_keep = max(1, int(n_cells * subsample_pct / 100))
+                keep_idx = np.random.RandomState(42).choice(n_cells, size=n_keep, replace=False)
+            else:
+                keep_idx = np.arange(n_cells)
+            color_arr = np.full(n_cells, '#D3D3D3')
 
-    # Precompute region full names as a vectorized map (avoids per-cell Python calls)
-    unique_regions = cells_df['region_display'].unique()
-    region_full_name_map = {r: _region_full_name(r, region_descriptions) for r in unique_regions}
+    # Apply subsampling to all arrays at once (fancy indexing returns copies)
+    arr_x = np.round(raw_x[keep_idx], 3)
+    arr_y = np.round(raw_y[keep_idx], 3)
+    arr_z = raw_z_slice[keep_idx]
+    arr_color = color_arr[keep_idx]
+    arr_cluster = raw_cluster[keep_idx]
+    arr_region = raw_region_display[keep_idx]
+    has_stroke = stroke_arr is not None
+    if has_stroke:
+        arr_stroke = stroke_arr[keep_idx]
+    else:
+        arr_stroke = None
 
-    # Sort for NP mode (render foreground on top) before extracting arrays
-    if mode == 'np':
+    # Diffusion range filter (NP mode only — modifies arr_color/arr_stroke in place)
+    if mode == 'np' and legend_arr is not None and 'enabled' in (diffusion_enabled or []):
+        arr_legend = legend_arr[keep_idx]
+        raw_z = cells_df['z'].values
+        arr_z_coord = raw_z[keep_idx]
+
+        z_extra = 0.15  # mm
+        z_scale = diffusion_range / (diffusion_range + z_extra)
+
+        ligand_mask = np.isin(arr_legend, ['Ligand', 'Both'])
+        if ligand_mask.any():
+            ligand_coords = np.column_stack([
+                arr_x[ligand_mask], arr_y[ligand_mask],
+                arr_z_coord[ligand_mask] * z_scale
+            ])
+            tree = cKDTree(ligand_coords)
+
+            receptor_mask = arr_legend == 'Receptor'
+            if receptor_mask.any():
+                receptor_coords = np.column_stack([
+                    arr_x[receptor_mask], arr_y[receptor_mask],
+                    arr_z_coord[receptor_mask] * z_scale
+                ])
+                distances, _ = tree.query(receptor_coords)
+                within_range = distances <= diffusion_range
+
+                receptor_indices = np.where(receptor_mask)[0]
+                color_target = arr_stroke if has_stroke else arr_color
+                color_target[receptor_indices[within_range]] = '#4169E1'
+                color_target[receptor_indices[~within_range]] = '#40E0D0'
+                arr_legend[receptor_indices[within_range]] = 'Receptor (in range)'
+                arr_legend[receptor_indices[~within_range]] = 'Receptor (out of range)'
+
+    # Sort for NP mode (render foreground on top)
+    if mode == 'np' and legend_arr is not None:
+        if 'enabled' not in (diffusion_enabled or []):
+            arr_legend = legend_arr[keep_idx]
         group_order_map = {'Neither': 0, 'Receptor (out of range)': 1, 'Receptor (in range)': 2,
                            'Receptor': 3, 'Both': 4, 'Ligand': 5}
-        sort_keys = cells_df['_legend_group'].map(group_order_map).fillna(0).values
+        sort_keys = np.array([group_order_map.get(g, 0) for g in arr_legend])
         sort_idx = np.argsort(sort_keys, kind='stable')
-        cells_df = cells_df.iloc[sort_idx]
+        arr_x = arr_x[sort_idx]
+        arr_y = arr_y[sort_idx]
+        arr_z = arr_z[sort_idx]
+        arr_color = arr_color[sort_idx]
+        arr_cluster = arr_cluster[sort_idx]
+        arr_region = arr_region[sort_idx]
+        if has_stroke:
+            arr_stroke = arr_stroke[sort_idx]
 
-    # Extract numpy arrays once — avoids per-slice pandas indexing overhead
-    # Round coordinates to 3 decimal places to reduce JSON payload (~30% smaller)
-    arr_x = np.round(cells_df['x'].values, 3)
-    arr_y = np.round(cells_df['y'].values, 3)
-    arr_z = cells_df['z_slice'].values
-    arr_color = cells_df['_color'].values
-    arr_cluster = cells_df['cluster'].values
-    arr_region = cells_df['region_display'].values
+    # Precompute region full names
+    unique_regions = np.unique(arr_region)
+    region_full_name_map = {r: _region_full_name(r, region_descriptions) for r in unique_regions}
     arr_region_full = np.array([region_full_name_map.get(r, r) for r in arr_region])
-    has_stroke = mode == 'np' and rainbow_mode and '_stroke_color' in cells_df.columns
-    arr_stroke = cells_df['_stroke_color'].values if has_stroke else None
 
     # Build all traces, shapes, and annotations
     all_traces = []
@@ -448,19 +434,19 @@ def create_slice_figure(
             'yanchor': 'bottom',
         })
 
-    # Compute data ranges with padding
-    x_min, x_max = cells_df['x'].min(), cells_df['x'].max()
-    x_pad = (x_max - x_min) * 0.05
-    x_range_final = [x_min - x_pad, x_max + x_pad]
-
-    y_min, y_max = cells_df['y'].min(), cells_df['y'].max()
-    y_pad = (y_max - y_min) * 0.05
-    y_range_final = [y_max + y_pad, y_min - y_pad]
-
-    # Configure axes directly on the layout dict.
-    # We do NOT use scaleanchor because it's silently ignored when combined with
-    # matches, and scattergl hits WebGL canvas size limits (16384px) in 1-column mode.
-    # Instead, fig_height is computed from data aspect ratio (see callers).
+    # Equalize x/y ranges for 1:1 aspect ratio. Combined with square subplot
+    # pixel dimensions (fig_height computed in callers), this enforces 1:1 scaling
+    # without scaleanchor (which conflicts with matches + scattergl).
+    x_min, x_max = float(arr_x.min()), float(arr_x.max())
+    y_min, y_max = float(arr_y.min()), float(arr_y.max())
+    x_span = x_max - x_min
+    y_span = y_max - y_min
+    max_span = max(x_span, y_span) * 1.05  # 5% padding
+    x_center = (x_min + x_max) / 2
+    y_center = (y_min + y_max) / 2
+    half = max_span / 2
+    x_range_final = [x_center - half, x_center + half]
+    y_range_final = [y_center + half, y_center - half]  # inverted y
     axis_common_x = dict(showticklabels=False, showgrid=False, zeroline=False, matches='x', range=x_range_final)
     axis_common_y = dict(showticklabels=False, showgrid=False, zeroline=False, matches='y', range=y_range_final)
 
@@ -950,12 +936,10 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 filtered_slices = ds['slices']
             import math
             n_rows = math.ceil(len(filtered_slices) / n_cols)
-            # Compute figure height from data aspect ratio, capped for WebGL limits
+            # Square subplots for 1:1 aspect ratio (ranges are equalized in create_slice_figure)
             cells_df = ds['cells_df']
-            x_span = cells_df['x'].max() - cells_df['x'].min()
-            y_span = cells_df['y'].max() - cells_df['y'].min()
-            subplot_height = (900 / n_cols) * (y_span / x_span)
-            fig_height = min(16000, max(800, int(n_rows * subplot_height)))
+            subplot_size = 900 / n_cols
+            fig_height = min(16000, max(800, int(n_rows * subplot_size)))
             # Default subsample scales with dataset size (target ~60k points)
             default_subsample = max(5, min(30, int(60000 / len(cells_df) * 100)))
             fig = create_slice_figure(
@@ -1004,12 +988,10 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 filtered_slices = ds['slices']
             import math
             n_rows = math.ceil(len(filtered_slices) / n_cols)
-            # Compute figure height from data aspect ratio
+            # Square subplots for 1:1 aspect ratio (ranges are equalized in create_slice_figure)
             cells_df = ds['cells_df']
-            x_span = cells_df['x'].max() - cells_df['x'].min()
-            y_span = cells_df['y'].max() - cells_df['y'].min()
-            subplot_height = (900 / n_cols) * (y_span / x_span)
-            fig_height = max(800, int(n_rows * subplot_height))
+            subplot_size = 900 / n_cols
+            fig_height = min(16000, max(800, int(n_rows * subplot_size)))
             # Default subsample scales with dataset size (target ~60k points)
             default_subsample = max(5, min(30, int(60000 / len(cells_df) * 100)))
             fig = create_slice_figure(

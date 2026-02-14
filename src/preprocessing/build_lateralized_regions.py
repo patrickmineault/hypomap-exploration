@@ -1,28 +1,42 @@
 """Precompute lateralized regions and boundaries for the coronal atlas app."""
 
+import argparse
 import pandas as pd
 import numpy as np
-from scipy.spatial import ConvexHull
+import alphashape
+from shapely.geometry import Polygon, MultiPolygon
 import json
 from pathlib import Path
 
 # Paths
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
-CELLS_PATH = DATA_DIR / "processed" / "mouse_abc" / "cells_with_coords.parquet"
-OUTPUT_PATH = DATA_DIR / "processed" / "mouse_abc" / "coronal_atlas_regions.json"
+DEFAULT_INPUT = DATA_DIR / "processed" / "mouse_abc" / "cells_with_coords.parquet"
+DEFAULT_OUTPUT = DATA_DIR / "processed" / "mouse_abc" / "coronal_atlas_regions.json"
 
 # Midline X coordinate
 MIDLINE_X = 5.5
 
+# Alphashape parameter (higher = tighter fit, lower = more convex)
+ALPHA = 6.0
 
-def main():
+# Laterality threshold (fraction of cells needed on each side to split L/R)
+LATERALITY_THRESHOLD = 0.01
+
+
+def main(input_path=None, output_path=None):
+    if input_path is None:
+        input_path = DEFAULT_INPUT
+    if output_path is None:
+        output_path = DEFAULT_OUTPUT
+
     print("Loading cell data...")
-    df = pd.read_parquet(CELLS_PATH)
+    df = pd.read_parquet(input_path)
     print(f"Loaded {len(df):,} cells")
 
-    # Filter out HY-unassigned
-    df = df[df['region'] != 'HY-unassigned'].copy()
-    print(f"After removing HY-unassigned: {len(df):,} cells")
+    # Filter out *-unassigned regions (e.g. HY-unassigned, TH-unassigned)
+    unassigned_mask = df['region'].str.endswith('-unassigned')
+    df = df[~unassigned_mask].copy()
+    print(f"After removing *-unassigned: {len(df):,} cells")
 
     # Add z_slice column
     df['z_slice'] = df['z'].round(1)
@@ -47,9 +61,9 @@ def main():
             left_count = (region_cells['x'] < MIDLINE_X).sum()
             right_count = (region_cells['x'] >= MIDLINE_X).sum()
 
-            # Split if both sides have significant presence (>10% each)
+            # Split if both sides have significant presence
             total = len(region_cells)
-            if left_count > 0.1 * total and right_count > 0.1 * total:
+            if left_count > LATERALITY_THRESHOLD * total and right_count > LATERALITY_THRESHOLD * total:
                 left_mask = region_mask & (df['x'] < MIDLINE_X)
                 right_mask = region_mask & (df['x'] >= MIDLINE_X)
                 df.loc[left_mask, 'region_display'] = f"{region}-L"
@@ -58,8 +72,8 @@ def main():
     n_lateralized = (df['region_display'] != df['region']).sum()
     print(f"Lateralized {n_lateralized:,} cells into L/R regions")
 
-    # Compute boundaries (convex hulls)
-    print("\nComputing region boundaries...")
+    # Compute boundaries using alphashape
+    print(f"\nComputing region boundaries (alphashape, alpha={ALPHA})...")
     boundaries = {}
     for z_slice in slices:
         slice_df = df[df['z_slice'] == z_slice]
@@ -70,10 +84,21 @@ def main():
             if len(region_df) >= 3:
                 points = region_df[['x', 'y']].values
                 try:
-                    hull = ConvexHull(points)
-                    hull_points = points[hull.vertices].tolist()
-                    hull_points.append(hull_points[0])  # Close polygon
-                    boundaries[str(z_slice)][region] = hull_points
+                    shape = alphashape.alphashape(points, ALPHA)
+
+                    # Extract boundary coordinates from the shape
+                    if shape.is_empty:
+                        continue
+
+                    # Handle both Polygon and MultiPolygon cases
+                    if isinstance(shape, Polygon):
+                        coords = list(shape.exterior.coords)
+                        boundaries[str(z_slice)][region] = [list(c) for c in coords]
+                    elif isinstance(shape, MultiPolygon):
+                        # Use the largest polygon
+                        largest = max(shape.geoms, key=lambda p: p.area)
+                        coords = list(largest.exterior.coords)
+                        boundaries[str(z_slice)][region] = [list(c) for c in coords]
                 except Exception:
                     pass
 
@@ -104,12 +129,29 @@ def main():
         'cell_regions': cell_regions,
     }
 
-    print(f"\nSaving to {OUTPUT_PATH}...")
-    with open(OUTPUT_PATH, 'w') as f:
+    print(f"\nSaving to {output_path}...")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w') as f:
         json.dump(output, f)
 
-    print(f"Done! Output size: {OUTPUT_PATH.stat().st_size / 1024 / 1024:.1f} MB")
+    print(f"Done! Output size: {output_path.stat().st_size / 1024 / 1024:.1f} MB")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Precompute lateralized regions and boundaries for the coronal atlas app."
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=None,
+        help="Input cells_with_coords.parquet path",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output coronal_atlas_regions.json path",
+    )
+    args = parser.parse_args()
+    main(input_path=args.input, output_path=args.output)

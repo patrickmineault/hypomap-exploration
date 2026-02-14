@@ -519,7 +519,9 @@ else:
     # Reloader child process OR imported by WSGI server - create real app
     app = create_app()
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the fireitup console script."""
+    global app
     if app is None:
         # We're the main reloader process - use minimal app to start reloader
         from dash import html
@@ -536,4 +538,8 @@ if __name__ == "__main__":
         print("\nStarting server at http://localhost:8050")
         print("Press Ctrl+C to stop\n")
 
-    app.run(debug=True, port=8050)
+    app.run(debug=True, port=8050, use_reloader=False)
+
+
+if __name__ == "__main__":
+    main()

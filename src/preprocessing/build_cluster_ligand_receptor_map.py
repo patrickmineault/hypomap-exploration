@@ -1,13 +1,13 @@
-"""Map neuropeptide ligand/receptor expression to ABC cell clusters.
+"""Map neuropeptide and hormone ligand/receptor expression to ABC cell clusters.
 
 Fetches expression data from the Allen Brain Cell Atlas for neuropeptide
-ligands and receptors, then aggregates by cluster to create expression profiles.
+and hormone ligands/receptors, then aggregates by cluster to create expression profiles.
 
 Usage:
-    # Using measured MERFISH panel (18 of 47 genes):
+    # Using measured MERFISH panel (subset of genes):
     python -m src.preprocessing.build_cluster_ligand_receptor_map
 
-    # Using imputed data (all 47 genes, ~50GB download):
+    # Using imputed data (all genes, ~50GB download):
     python -m src.preprocessing.build_cluster_ligand_receptor_map --use-imputed
 """
 
@@ -22,6 +22,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 CACHE_DIR = DATA_DIR / "raw" / "abc_atlas_cache"
 OUTPUT_DIR = DATA_DIR / "processed" / "mouse_abc"
 NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
+HORMONE_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "hormone_map.csv"
 
 # Imputed data paths (external drive for large files)
 IMPUTED_CACHE_DIR = Path("/Volumes/ExtDrive/mouse_abc_data")
@@ -33,8 +34,8 @@ IMPUTED_EXPR_FILE = "C57BL6J-638850-imputed/log2"
 EXPRESSION_THRESHOLD = 3.0
 
 
-def get_neuropeptide_genes() -> tuple[list[str], set[str], set[str]]:
-    """Load neuropeptide ligand/receptor genes from curated np_map.csv.
+def get_ligand_receptor_genes() -> tuple[list[str], set[str], set[str]]:
+    """Load ligand/receptor genes from np_map.csv and hormone_map.csv.
 
     Handles semicolon-separated gene names (e.g., "Calcrl;Ramp2" for heterodimer
     receptors) by splitting them into individual genes for expression lookup.
@@ -42,28 +43,42 @@ def get_neuropeptide_genes() -> tuple[list[str], set[str], set[str]]:
     Returns:
         Tuple of (all_genes list, ligand_genes set, receptor_genes set)
     """
-    np_map = pd.read_csv(NP_MAP_PATH)
-
-    # Get unique ligand genes (split semicolons for any multi-gene ligands)
     ligand_genes = set()
+    receptor_genes = set()
+
+    # Load neuropeptide genes
+    np_map = pd.read_csv(NP_MAP_PATH)
     for lg in np_map["Ligand_Gene"].dropna().unique():
         for g in lg.split(";"):
             ligand_genes.add(g.strip())
-
-    # Get unique receptor genes (split semicolons for heterodimer receptors)
-    # e.g., "Calcrl;Ramp2" -> ["Calcrl", "Ramp2"]
-    receptor_genes = set()
     for rg in np_map["Receptor_Gene"].dropna().unique():
         for g in rg.split(";"):
             receptor_genes.add(g.strip())
 
-    all_genes = sorted(ligand_genes | receptor_genes)
-
-    # Report what we're including
     print(f"  Loaded {len(np_map)} ligand-receptor pairs from np_map.csv")
     for lclass in np_map["Ligand_Class"].unique():
         n = len(np_map[np_map["Ligand_Class"] == lclass])
-        print(f"  {lclass}: {n} interactions")
+        print(f"    {lclass}: {n} interactions")
+
+    # Load hormone genes
+    if HORMONE_MAP_PATH.exists():
+        hormone_map = pd.read_csv(HORMONE_MAP_PATH)
+        for lg in hormone_map["Ligand_Gene"].dropna().unique():
+            for g in lg.split(";"):
+                ligand_genes.add(g.strip())
+        for rg in hormone_map["Receptor_Gene"].dropna().unique():
+            for g in rg.split(";"):
+                receptor_genes.add(g.strip())
+
+        print(f"  Loaded {len(hormone_map)} ligand-receptor pairs from hormone_map.csv")
+        if "hormone_class" in hormone_map.columns:
+            for hclass in hormone_map["hormone_class"].dropna().unique():
+                n = len(hormone_map[hormone_map["hormone_class"] == hclass])
+                print(f"    {hclass}: {n} interactions")
+    else:
+        print(f"  Warning: hormone_map.csv not found at {HORMONE_MAP_PATH}")
+
+    all_genes = sorted(ligand_genes | receptor_genes)
 
     return all_genes, ligand_genes, receptor_genes
 
@@ -241,6 +256,12 @@ def parse_args():
         action="store_true",
         help="Use imputed expression data (all genes, ~50GB download to external drive)",
     )
+    parser.add_argument(
+        "--metadata-dir",
+        type=Path,
+        default=None,
+        help="Directory containing cell_metadata.parquet (default: data/processed/mouse_abc)",
+    )
     return parser.parse_args()
 
 
@@ -252,22 +273,23 @@ def main():
     print("=== Building Cluster Ligand-Receptor Expression Map ===\n")
 
     if args.use_imputed:
-        print("MODE: Using IMPUTED expression data (all 47 genes)")
+        print("MODE: Using IMPUTED expression data (all genes)")
         print(f"Data will be downloaded to: {IMPUTED_CACHE_DIR}\n")
     else:
-        print("MODE: Using MEASURED MERFISH panel (18 of 47 genes)")
+        print("MODE: Using MEASURED MERFISH panel (subset of genes)")
         print("Use --use-imputed for all genes\n")
 
     # 1. Load genes
-    print("Loading neuropeptide ligand/receptor genes...")
-    genes, ligand_genes, receptor_genes = get_neuropeptide_genes()
+    print("Loading neuropeptide and hormone ligand/receptor genes...")
+    genes, ligand_genes, receptor_genes = get_ligand_receptor_genes()
     print(f"  Ligands: {len(ligand_genes)}")
     print(f"  Receptors: {len(receptor_genes)}")
     print(f"  Total unique genes: {len(genes)}")
 
     # 2. Load cell metadata
-    print("\nLoading hypothalamus cell metadata...")
-    cells = pd.read_parquet(OUTPUT_DIR / "cell_metadata.parquet")
+    metadata_dir = args.metadata_dir if args.metadata_dir else OUTPUT_DIR
+    print(f"\nLoading cell metadata from {metadata_dir}...")
+    cells = pd.read_parquet(metadata_dir / "cell_metadata.parquet")
     cells = cells.set_index("cell_id") if "cell_id" in cells.columns else cells
     print(f"  Cells: {len(cells)}")
     print(f"  Clusters: {cells['cluster'].nunique()}")
@@ -279,17 +301,17 @@ def main():
     )
 
     # 4. Save per-cell expression
-    expr_path = OUTPUT_DIR / "neuropeptide_expression.parquet"
+    expr_path = metadata_dir / "neuropeptide_expression.parquet"
     expr_df.to_parquet(expr_path)
     print(f"\nSaved per-cell expression to {expr_path}")
     print(f"  Shape: {expr_df.shape}")
 
     # Save list of missing genes for reference
     if genes_missing:
-        missing_path = OUTPUT_DIR / "neuropeptide_genes_missing.txt"
+        missing_path = metadata_dir / "ligand_receptor_genes_missing.txt"
         with open(missing_path, "w") as f:
             f.write(
-                "# Neuropeptide genes not in MERFISH panel (would need imputed data)\n"
+                "# Ligand/receptor genes not in MERFISH panel (would need imputed data)\n"
             )
             for g in sorted(genes_missing):
                 f.write(f"{g}\n")
@@ -301,7 +323,7 @@ def main():
     )
 
     # 6. Save cluster profiles
-    profile_path = OUTPUT_DIR / "cluster_ligand_receptor_profile.parquet"
+    profile_path = metadata_dir / "cluster_ligand_receptor_profile.parquet"
     cluster_df.to_parquet(profile_path)
     print(f"\nSaved cluster profiles to {profile_path}")
     print(f"  Shape: {cluster_df.shape}")

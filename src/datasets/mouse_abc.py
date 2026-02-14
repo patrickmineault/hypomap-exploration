@@ -1,9 +1,11 @@
-"""Allen Brain Cell Census (ABC) Hypothalamus dataset adapter.
+"""Allen Brain Cell Census (ABC) dataset adapter.
 
-Handles extraction and processing of the ABC MERFISH hypothalamus data.
+Handles extraction and processing of the ABC MERFISH data.
 Uses AbcProjectCache to load data from the Allen Institute cloud storage.
+Supports filtering to hypothalamus-only or expanded subcortical divisions.
 """
 
+import argparse
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -14,6 +16,7 @@ from .base import DatasetConfig
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 DOWNLOAD_BASE = DATA_DIR / "raw" / "abc_atlas_cache"
 PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc"
+SUBCORTICAL_PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc_subcortical"
 
 # ABC hypothalamus marker genes (mouse gene symbols)
 ABC_MARKER_GENES = [
@@ -72,6 +75,81 @@ def get_mouse_abc_config() -> DatasetConfig:
     )
 
 
+# Additional region colors for subcortical structures outside hypothalamus
+ABC_SUBCORTICAL_REGION_COLORS = {
+    **ABC_REGION_COLORS,
+    # Thalamus (TH) regions
+    'AD': '#1E90FF',      # Anterodorsal nucleus
+    'AM': '#4682B4',      # Anteromedial nucleus
+    'AV': '#5F9EA0',      # Anteroventral nucleus
+    'CM': '#6495ED',      # Central medial nucleus
+    'IAD': '#7B68EE',     # Interanterodorsal nucleus
+    'IMD': '#6A5ACD',     # Intermediodorsal nucleus
+    'LD': '#4169E1',      # Lateral dorsal nucleus
+    'LGd': '#0000CD',     # Lateral geniculate, dorsal
+    'LGv': '#0000FF',     # Lateral geniculate, ventral
+    'LP': '#1E90FF',      # Lateral posterior nucleus
+    'MD': '#00BFFF',      # Mediodorsal nucleus
+    'MG': '#87CEEB',      # Medial geniculate
+    'PCN': '#4682B4',     # Paracentral nucleus
+    'PF': '#B0C4DE',      # Parafascicular nucleus
+    'PO': '#5B9BD5',      # Posterior thalamic nuclear group
+    'PT': '#2F4F4F',      # Parataenial nucleus
+    'PVT': '#008080',     # Paraventricular thalamic nucleus
+    'RE': '#20B2AA',      # Nucleus reuniens
+    'RH': '#48D1CC',      # Rhomboid nucleus
+    'RT': '#40E0D0',      # Reticular nucleus
+    'SGN': '#00CED1',     # Suprageniculate nucleus
+    'SMT': '#5F9EA0',     # Submedial thalamic nucleus
+    'SPFm': '#7FFFD4',    # Subparafascicular nucleus, magnocellular
+    'SPFp': '#66CDAA',    # Subparafascicular nucleus, parvicellular
+    'VAL': '#3CB371',     # Ventral anterior-lateral
+    'VM': '#2E8B57',      # Ventral medial nucleus
+    'VPL': '#006400',     # Ventral posterolateral
+    'VPLpc': '#228B22',   # VPL, parvicellular
+    'VPM': '#32CD32',     # Ventral posteromedial
+    'VPMpc': '#00FF00',   # VPM, parvicellular
+    'Xi': '#98FB98',      # Xiphoid thalamic nucleus
+    # Striatum (STR) regions
+    'ACB': '#FF7F50',     # Nucleus accumbens
+    'CP': '#FF6347',      # Caudoputamen
+    'FS': '#FF4500',      # Fundus of striatum
+    'LSX': '#FF8C00',     # Lateral septal complex
+    'LS': '#FFA500',      # Lateral septal nucleus
+    'OT': '#FFD700',      # Olfactory tubercle
+    'sAMY': '#F0E68C',    # Striatum-like amygdalar nuclei
+    # Pallidum (PAL) regions
+    'BST': '#DDA0DD',     # Bed nuclei of the stria terminalis
+    'GPe': '#DA70D6',     # Globus pallidus, external
+    'GPi': '#BA55D3',     # Globus pallidus, internal
+    'MS': '#9370DB',      # Medial septal nucleus
+    'NDB': '#8A2BE2',     # Diagonal band nucleus
+    'SI': '#9400D3',      # Substantia innominata
+    'MA': '#800080',      # Magnocellular nucleus
+    'TRS': '#C71585',     # Triangular nucleus of septum
+    # Generic division-unassigned colors
+    'TH-unassigned': '#666666',
+    'STR-unassigned': '#666666',
+    'PAL-unassigned': '#666666',
+}
+
+
+def get_mouse_abc_subcortical_config() -> DatasetConfig:
+    """Get configuration for the mouse ABC subcortical dataset (HY + TH + STR + PAL)."""
+    return DatasetConfig(
+        name="mouse_abc_subcortical",
+        species="Mus musculus",
+        h5ad_path=DOWNLOAD_BASE,
+        processed_dir=SUBCORTICAL_PROCESSED_DIR,
+        cell_type_columns=['class', 'subclass', 'supertype', 'cluster'],
+        region_column="region",
+        gene_column=None,
+        marker_genes=ABC_MARKER_GENES,
+        key_receptors=ABC_KEY_RECEPTORS,
+        region_colors=ABC_SUBCORTICAL_REGION_COLORS,
+    )
+
+
 def classify_neurons(metadata: pd.DataFrame) -> pd.Series:
     """Classify cells as neuronal or non-neuronal.
 
@@ -103,19 +181,29 @@ def classify_neurons(metadata: pd.DataFrame) -> pd.Series:
     return pd.Series(False, index=metadata.index)
 
 
-def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame:
-    """Extract cell metadata from ABC MERFISH data, filtered to hypothalamus.
+def extract_mouse_abc_metadata(
+    cache_dir: Optional[Path] = None,
+    divisions: Optional[list[str]] = None,
+    output_dir: Optional[Path] = None,
+) -> pd.DataFrame:
+    """Extract cell metadata from ABC MERFISH data, filtered to specified divisions.
 
     Args:
         cache_dir: Path to ABC cache directory. If None, uses default.
+        divisions: List of parcellation_division values to include (default: ['HY']).
+        output_dir: Output directory for processed files. If None, uses default.
 
     Returns:
-        DataFrame with cell metadata for hypothalamic cells
+        DataFrame with cell metadata for filtered cells
     """
     from abc_atlas_access.abc_atlas_cache.abc_project_cache import AbcProjectCache
 
     if cache_dir is None:
         cache_dir = DOWNLOAD_BASE
+    if divisions is None:
+        divisions = ['HY']
+    if output_dir is None:
+        output_dir = PROCESSED_DIR
 
     # Ensure cache directory exists
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -170,11 +258,11 @@ def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame
 
     print(f"After joining: {len(cell)} cells")
 
-    # 5. Filter to hypothalamus (HY)
-    print("Filtering to hypothalamus (HY)...")
-    hy_mask = cell['parcellation_division'] == 'HY'
-    cell = cell[hy_mask].copy()
-    print(f"HY cells: {len(cell)}")
+    # 5. Filter to requested divisions
+    print(f"Filtering to divisions: {divisions}...")
+    div_mask = cell['parcellation_division'].isin(divisions)
+    cell = cell[div_mask].copy()
+    print(f"Filtered cells: {len(cell)}")
 
     # 6. Rename/standardize columns for hypomap compatibility
     # Drop original section-local coordinates (we use CCF-registered reconstructed coords)
@@ -198,10 +286,10 @@ def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame
     print(f"Classified {n_neurons} neurons ({100*n_neurons/len(cell):.1f}%)")
 
     # Ensure output directory exists
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # 8. Save cell metadata
-    metadata_path = PROCESSED_DIR / "cell_metadata.parquet"
+    metadata_path = output_dir / "cell_metadata.parquet"
     cell.to_parquet(metadata_path)
     print(f"Saved metadata for {len(cell)} cells to {metadata_path}")
 
@@ -218,7 +306,7 @@ def extract_mouse_abc_metadata(cache_dir: Optional[Path] = None) -> pd.DataFrame
     # Remove duplicates
     genes_df = genes_df.drop_duplicates(subset=['gene'], keep='first')
 
-    genes_path = PROCESSED_DIR / "genes.parquet"
+    genes_path = output_dir / "genes.parquet"
     genes_df.to_parquet(genes_path)
     print(f"Saved {len(genes_df)} genes to {genes_path}")
 
@@ -256,5 +344,25 @@ def print_mouse_abc_summary(metadata: pd.DataFrame):
 
 
 if __name__ == "__main__":
-    metadata = extract_mouse_abc_metadata()
+    parser = argparse.ArgumentParser(
+        description="Extract cell metadata from ABC MERFISH data."
+    )
+    parser.add_argument(
+        "--divisions",
+        nargs="+",
+        default=["HY"],
+        help="Parcellation divisions to include (default: HY)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output directory for processed files (default: data/processed/mouse_abc)",
+    )
+    args = parser.parse_args()
+
+    metadata = extract_mouse_abc_metadata(
+        divisions=args.divisions,
+        output_dir=args.output_dir,
+    )
     print_mouse_abc_summary(metadata)
