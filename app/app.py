@@ -577,48 +577,20 @@ def create_app():
     return app
 
 
-# Create app instance
-# With debug reloader, the module loads twice: once in main process (which spawns
-# the child), once in child (which runs the server). We only load data in the child.
-_main_mod = sys.modules.get("__main__")
-_running_as_main = (
-    _main_mod is not None
-    and getattr(_main_mod, "__file__", None) is not None
-    and _main_mod.__file__.endswith("app.py")
-)
-_is_reloader_main = _running_as_main and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
-
-if _is_reloader_main:
-    # Main reloader process - skip expensive data loading, child will do it
-    app = None
-else:
-    # Reloader child process OR imported by WSGI server - create real app
-    app = create_app()
+# Create app instance at module level (used by both __main__ and WSGI imports)
+app = create_app()
 
 
 def main():
     """Entry point for the fireitup console script."""
-    global app
-    if app is None:
-        # We're the main reloader process - use minimal app to start reloader
-        from dash import html
-
-        app = Dash(
-            __name__,
-            external_stylesheets=[dbc.themes.BOOTSTRAP],
-            title="HypoMap Coronal Atlas",
-        )
-        app.layout = html.Div("Starting...")
-    else:
-        print("\n" + "=" * 50)
-        print("HypoMap Coronal Atlas Viewer")
-        print("=" * 50)
-        print("\nStarting server at http://localhost:8050")
-        print("Press Ctrl+C to stop\n")
+    print("\n" + "=" * 50)
+    print("HypoMap Coronal Atlas Viewer")
+    print("=" * 50)
+    print("\nStarting server at http://localhost:8050")
+    print("Press Ctrl+C to stop\n")
 
     app.run(debug=True, port=8050, use_reloader=False)
 
 
 if __name__ == "__main__":
-    main()
     main()
