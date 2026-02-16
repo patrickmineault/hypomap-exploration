@@ -1,18 +1,22 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "auto-mix-prep==0.2.0",
+#     "hypomap",
+#     "auto-mix-prep",
 #     "marimo>=0.19.11",
-#     "matplotlib==3.10.8",
-#     "numpy==2.4.2",
-#     "pandas==3.0.0",
-#     "plotly==6.5.2",
-#     "pyarrow==23.0.0",
-#     "scipy==1.17.0",
+#     "matplotlib",
+#     "numpy",
+#     "pandas",
+#     "plotly",
+#     "pyarrow",
+#     "scipy",
 # ]
 #
 # [tool.uv.sources]
-# my-local-package = { path = "../", editable = true }
+# hypomap = { path = "../", editable = true }
+#
+# [tool.hatch.build.targets.wheel]
+# packages = ["hypomap"]
 # ///
 
 import marimo
@@ -31,6 +35,12 @@ def _():
     import numpy as np
     import pandas as pd
     import plotly.graph_objects as go
+    from hypomap.diversity import (
+        build_diversity_sats,
+        build_local_diversity_grid,
+        find_max_mean_diversity_box,
+        mask_excluded_regions,
+    )
     from plotly.subplots import make_subplots
     from scipy.spatial import cKDTree
 
@@ -39,8 +49,7 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     # Subcortical Heterogeneity Map
 
     Interactive visualization of **cell-type diversity** across subcortical structures
@@ -56,8 +65,7 @@ def _(mo):
     | Shannon diversity | H = -sum(p_i * log2(p_i)) | Sensitive to rare types; higher = more diverse |
     | Simpson diversity | D = 1 - sum(p_i^2) | Probability two random cells are different types |
     | Type count | len(unique types in radius) | Simple count of distinct types at chosen granularity |
-    """
-    )
+    """)
     return
 
 
@@ -291,14 +299,12 @@ def _(
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ---
     ## Multi-Slice Overview
 
     Each panel shows one coronal slice. Color = diversity metric value (Viridis scale).
-    """
-    )
+    """)
     return
 
 
@@ -455,14 +461,12 @@ def _(
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ---
     ## Single-Slice Detail
 
     Select a slice for a detailed view with region boundaries and labels.
-    """
-    )
+    """)
     return
 
 
@@ -727,8 +731,7 @@ def _(
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ---
     ## Region Diversity Table
 
@@ -741,8 +744,7 @@ def _(mo):
 
     Metrics are computed at the currently selected taxonomic granularity.
     Sort any column by clicking its header.
-    """
-    )
+    """)
     return
 
 
@@ -1031,33 +1033,17 @@ def _(go, make_subplots, math):
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     # Proposed bounding boxes
-    """
-    )
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    from hypomap.diversity import (
-        build_diversity_sats,
-        build_local_diversity_grid,
-        find_max_mean_diversity_box,
-        mask_excluded_regions,
-    )
-
+    """)
     return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## HY microcircuit
-    """
-    )
+    """)
     return
 
 
@@ -1113,11 +1099,9 @@ def _(plot_regions):
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Whole volume
-    """
-    )
+    """)
     return
 
 
@@ -1141,8 +1125,7 @@ def _(plot_regions):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ---
     ## Interpretation Guide
 
@@ -1172,8 +1155,7 @@ def _(mo):
     - Start with subclass granularity and 0.15mm radius for a good initial view
     - Compare Shannon vs Simpson: if they disagree, it often means rare types are present (Shannon is more sensitive to rare types)
     - Use the multi-granularity comparison to identify regions where diversity depends strongly on resolution
-    """
-    )
+    """)
     return
 
 
