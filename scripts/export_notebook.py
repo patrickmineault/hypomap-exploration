@@ -5,13 +5,13 @@ Usage:
     uv run python scripts/export_notebook.py
 
 Copies notebooks/heterogeneity_map.py (as notebook.py), its local Python imports,
-and data files into ../marimo-export/heterogeneity/ as a completely flat folder.
-Rewrites import paths and data paths, and prepends PEP 723 inline dependency
-metadata so the notebook is fully self-describing.
+and data files into ./export/ as a completely flat folder. Rewrites import and data
+paths, then runs marimo export html-wasm to produce a static WASM build.
 """
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -25,50 +25,46 @@ DATA_FILES = [
     DATA_DIR / "coronal_atlas_regions.json",
 ]
 
-LOCAL_MODULES = [
-    REPO_ROOT / "hypomap" / "diversity.py",
-]
+LOCAL_MODULES = []
 
-OUTPUT_DIR = REPO_ROOT.parent / "marimo-export" / "heterogeneity"
-
-# PEP 723 inline script metadata (versions from uv.lock)
-PEP723_BLOCK = """\
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#     "marimo>=0.19.4",
-#     "pandas>=2.3.3",
-#     "numpy>=1.26.4,<2",
-#     "plotly>=6.5.2",
-#     "scipy>=1.17.0",
-#     "matplotlib>=3.10.8",
-# ]
-# ///
-"""
+OUTPUT_DIR = REPO_ROOT / "export"
 
 
 def rewrite_notebook(source_text: str) -> str:
-    """Rewrite paths and prepend PEP 723 metadata for flat directory layout."""
+    """Rewrite paths for flat directory layout."""
     out = source_text
 
-    # Rewrite data path: Path('../data/processed/mouse_abc_subcortical') -> Path('.')
+    # Rewrite data path to use mo.notebook_location() / "public" for WASM compat
     out = re.sub(
         r"Path\(['\"]\.\.\/data\/processed\/mouse_abc_subcortical['\"]\)",
-        "Path('.')",
+        'mo.notebook_location() / "public"',
         out,
     )
 
-    # Rewrite local imports: from hypomap.diversity import -> from diversity import
+    # Add mo to the data-loading cell's parameters (needed for mo.notebook_location)
+    out = out.replace(
+        "def _(Path, json, np, pd):",
+        "def _(Path, json, mo, np, pd):",
+    )
+
+    # Remove the unused hypomap.diversity import block
     out = re.sub(
-        r"from hypomap\.(\w+) import",
-        r"from \1 import",
+        r"    from hypomap\.diversity import \(\n(?:        .+\n)*    \)\n",
+        "",
         out,
     )
 
-    # Prepend PEP 723 block after the first line (import marimo)
-    # Marimo notebooks start with "import marimo"
-    first_newline = out.index("\n") + 1
-    out = out[:first_newline] + "\n" + PEP723_BLOCK + "\n" + out[first_newline:]
+    # Insert a micropip cell before the first @app.cell
+    micropip_cell = (
+        "@app.cell(hide_code=True)\n"
+        "def _():\n"
+        "    import micropip\n"
+        '    await micropip.install("plotly")\n'
+        "    return\n"
+        "\n"
+        "\n"
+    )
+    out = out.replace("@app.cell\n", micropip_cell + "@app.cell\n", 1)
 
     return out
 
@@ -88,14 +84,35 @@ def main():
         shutil.copy2(mod, OUTPUT_DIR / mod.name)
         print(f"  {mod.name}")
 
-    # Copy data files
+    # Copy data files into public/ (picked up by marimo WASM export)
+    public_dir = OUTPUT_DIR / "public"
+    public_dir.mkdir(parents=True, exist_ok=True)
     for data_file in DATA_FILES:
-        shutil.copy2(data_file, OUTPUT_DIR / data_file.name)
-        print(f"  {data_file.name}")
+        shutil.copy2(data_file, public_dir / data_file.name)
+        print(f"  public/{data_file.name}")
 
     print(
         f"\nExported {1 + len(LOCAL_MODULES) + len(DATA_FILES)} files to {OUTPUT_DIR}"
     )
+
+    # Export as WASM-based HTML for static hosting
+    print("\nRunning marimo export html-wasm...")
+    subprocess.run(
+        [
+            "marimo",
+            "export",
+            "html-wasm",
+            "notebook.py",
+            "-o",
+            "out/",
+            "--mode",
+            "edit",
+            "--sandbox",
+        ],
+        cwd=OUTPUT_DIR,
+        check=True,
+    )
+    print("Done.")
 
 
 if __name__ == "__main__":

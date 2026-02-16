@@ -78,3 +78,4 @@ logs/
 uv.lockapp/data
 
 app/data
+export
