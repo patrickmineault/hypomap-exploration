@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 NOTEBOOK = REPO_ROOT / "notebooks" / "heterogeneity_map.py"
 
-DATA_DIR = REPO_ROOT / "data" / "processed" / "mouse_abc_subcortical"
+DATA_DIR = REPO_ROOT / "data" / "processed" / "mouse_abc_extended"
 DATA_FILES = [
     DATA_DIR / "cells_with_coords.parquet",
     DATA_DIR / "neuropeptide_expression.parquet",
@@ -36,7 +36,7 @@ def rewrite_notebook(source_text: str) -> str:
 
     # Rewrite data path to use mo.notebook_location() / "public" for WASM compat
     out = re.sub(
-        r"Path\(['\"]\.\.\/data\/processed\/mouse_abc_subcortical['\"]\)",
+        r"Path\(['\"]\.\.\/data\/processed\/mouse_abc_extended['\"]\)",
         'mo.notebook_location() / "public"',
         out,
     )

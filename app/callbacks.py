@@ -315,10 +315,19 @@ def create_slice_figure(
         if has_stroke:
             arr_stroke = arr_stroke[sort_idx]
 
-    # Precompute region full names
+    # Precompute region full names and divisions
     unique_regions = np.unique(arr_region)
     region_full_name_map = {r: _region_full_name(r, region_descriptions) for r in unique_regions}
     arr_region_full = np.array([region_full_name_map.get(r, r) for r in arr_region])
+
+    def _region_division(region_display):
+        if not region_descriptions:
+            return ''
+        base = region_display.rsplit('-', 1)[0] if region_display.endswith(('-L', '-R')) else region_display
+        return region_descriptions.get(base, {}).get('division', '')
+
+    region_division_map = {r: _region_division(r) for r in unique_regions}
+    arr_region_div = np.array([region_division_map.get(r, '') for r in arr_region])
 
     # Build all traces, shapes, and annotations
     all_traces = []
@@ -393,8 +402,8 @@ def create_slice_figure(
                 'mode': 'markers',
                 'marker': marker_dict,
                 'showlegend': False,
-                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br><extra></extra>',
-                'customdata': np.column_stack([arr_cluster[mask], arr_region[mask], arr_region_full[mask]]).tolist(),
+                'hovertemplate': '<b>%{customdata[0]}</b><br>Region: %{customdata[1]} (%{customdata[2]})<br>Division: %{customdata[3]}<extra></extra>',
+                'customdata': np.column_stack([arr_cluster[mask], arr_region[mask], arr_region_full[mask], arr_region_div[mask]]).tolist(),
                 'xaxis': xaxis,
                 'yaxis': yaxis,
             })
@@ -638,6 +647,7 @@ def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, re
     # Get region info
     region_info = region_descriptions.get(region, {})
     region_full_name = region_info.get('full_name', region)
+    region_division = region_info.get('division', '')
 
     # Get NT type (direct lookup)
     nt_type = nt_mapping.get(cluster_name, 'Unknown')
@@ -688,6 +698,18 @@ def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, re
                 html.Li(f"Subclass: {cell_info.get('subclass', 'NA')}", style={'fontSize': '0.85rem'}),
                 html.Li(f"Supertype: {cell_info.get('supertype', 'NA')}", style={'fontSize': '0.85rem'}),
             ], className="mb-2", style={'paddingLeft': '1.2rem'}),
+        ]),
+
+        html.Hr(),
+
+        # Region info
+        html.Div([
+            html.H6("Region", className="text-muted mb-1"),
+            html.P([
+                html.Span(region, className="fw-bold"),
+                html.Span(f" — {region_full_name}", style={'fontSize': '0.85rem'}) if region_full_name and region_full_name != region else None,
+            ], className="mb-1", style={'fontSize': '0.9rem'}),
+            html.P(f"Division: {region_division}", style={'fontSize': '0.8rem', 'color': '#666'}) if region_division else None,
         ]),
 
         html.Hr(),

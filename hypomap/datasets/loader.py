@@ -5,12 +5,12 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from .base import DatasetConfig
-from .mouse_abc import get_mouse_abc_config, get_mouse_abc_subcortical_config
+from .mouse_abc import get_mouse_abc_config, get_mouse_abc_extended_config
 
 # Registry of available datasets
 DATASETS = {
     "mouse_abc": get_mouse_abc_config,
-    "mouse_abc_subcortical": get_mouse_abc_subcortical_config,
+    "mouse_abc_extended": get_mouse_abc_extended_config,
 }
 
 # Optional datasets (modules may not exist)

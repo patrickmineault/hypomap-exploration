@@ -21,7 +21,7 @@
 
 import marimo
 
-__generated_with = "0.19.11"
+__generated_with = "0.19.4"
 app = marimo.App(width="medium")
 
 
@@ -43,7 +43,6 @@ def _():
     )
     from plotly.subplots import make_subplots
     from scipy.spatial import cKDTree
-
     return Path, cKDTree, go, json, make_subplots, math, mo, np, pd
 
 
@@ -72,7 +71,7 @@ def _(mo):
 @app.cell
 def _(Path, json, np, pd):
     # Load cell data
-    _data_dir = Path("../data/processed/mouse_abc_subcortical")
+    _data_dir = Path("../data/processed/mouse_abc_extended")
     cells_df = pd.read_parquet(_data_dir / "cells_with_coords.parquet")
 
     # Filter unassigned regions
@@ -207,7 +206,6 @@ def _(cKDTree, np):
                 _values[_i] = compute_diversity(int_labels[_nbrs], metric)
 
         return xy[:, 0], xy[:, 1], _values
-
     return (
         compute_diversity,
         compute_heterogeneity_grid,
@@ -467,6 +465,11 @@ def _(mo):
 
     Select a slice for a detailed view with region boundaries and labels.
     """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
@@ -1027,7 +1030,6 @@ def _(go, make_subplots, math):
                 if i > 0:
                     fig_dict["layout"][yk]["matches"] = "y"
         return go.Figure(fig_dict)
-
     return (make_bbox_figure,)
 
 

@@ -184,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", "-d",
         default="mouse_hypomap",
-        choices=["mouse_hypomap", "human_hypomap", "mouse_abc", "mouse_abc_subcortical"],
+        choices=["mouse_hypomap", "human_hypomap", "mouse_abc", "mouse_abc_extended"],
         help="Dataset to process (default: mouse_hypomap)"
     )
     parser.add_argument(
@@ -210,5 +210,4 @@ if __name__ == "__main__":
         cell_type_level=args.cell_type_level,
         target_n=args.target,
         assign_coords=not args.no_coords,
-    )
     )

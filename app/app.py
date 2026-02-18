@@ -1,7 +1,6 @@
 """Main Dash application for HypoMap Coronal Atlas Viewer."""
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -52,22 +51,22 @@ DATASET_PATHS = {
         / "mouse_abc"
         / "cluster_np_expression.parquet",
     },
-    "mouse_abc_subcortical": {
+    "mouse_abc_extended": {
         "cells": DATA_DIR
         / "processed"
-        / "mouse_abc_subcortical"
+        / "mouse_abc_extended"
         / "cells_with_coords.parquet",
         "regions": DATA_DIR
         / "processed"
-        / "mouse_abc_subcortical"
+        / "mouse_abc_extended"
         / "coronal_atlas_regions.json",
         "lr_profile": DATA_DIR
         / "processed"
-        / "mouse_abc_subcortical"
+        / "mouse_abc_extended"
         / "cluster_ligand_receptor_profile.parquet",
         "np_expr": DATA_DIR
         / "processed"
-        / "mouse_abc_subcortical"
+        / "mouse_abc_extended"
         / "cluster_np_expression.parquet",
     },
 }
@@ -79,10 +78,8 @@ def load_ccf_region_colors():
     Merges the parcellation color and acronym tables from the ABC atlas cache
     to produce a mapping from region acronym to hex color.
     """
-    # Use project root data dir (abc_atlas_cache is not copied into app/data)
-    project_data = Path(__file__).parent.parent / "data"
     cache_base = (
-        project_data
+        DATA_DIR
         / "raw"
         / "abc_atlas_cache"
         / "metadata"
@@ -121,7 +118,7 @@ CCF_REGION_COLORS = load_ccf_region_colors()
 # Map dataset name to region colors (same CCF colors for all datasets)
 DATASET_REGION_COLORS = {
     "mouse_abc": CCF_REGION_COLORS,
-    "mouse_abc_subcortical": CCF_REGION_COLORS,
+    "mouse_abc_extended": CCF_REGION_COLORS,
 }
 
 
@@ -393,6 +390,7 @@ def load_region_descriptions():
     for _, row in df.iterrows():
         region_info[row["acronym"]] = {
             "full_name": row.get("full_name", ""),
+            "division": row.get("division", ""),
             "description": row.get("description", ""),
         }
     return region_info
@@ -495,10 +493,10 @@ def create_app():
     if not datasets:
         raise FileNotFoundError("No datasets found. Run preprocessing first.")
 
-    # Default dataset is subcortical if available
+    # Default dataset is extended if available
     default_dataset = (
-        "mouse_abc_subcortical"
-        if "mouse_abc_subcortical" in datasets
+        "mouse_abc_extended"
+        if "mouse_abc_extended" in datasets
         else list(datasets.keys())[0]
     )
 

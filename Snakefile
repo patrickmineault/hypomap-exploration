@@ -17,10 +17,13 @@ rule all:
         "data/processed/mouse_abc/cluster_np_expression.parquet",
         "data/processed/mouse_abc/coronal_atlas_regions.json",
         "data/processed/mouse_common/hypothalamus_connectivity.csv",
-        "data/processed/mouse_abc_subcortical/cells_with_coords.parquet",
-        "data/processed/mouse_abc_subcortical/cluster_ligand_receptor_profile.parquet",
-        "data/processed/mouse_abc_subcortical/cluster_np_expression.parquet",
-        "data/processed/mouse_abc_subcortical/coronal_atlas_regions.json",
+        "data/processed/mouse_abc_extended/cells_with_coords.parquet",
+        "data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet",
+        "data/processed/mouse_abc_extended/cluster_np_expression.parquet",
+        "data/processed/mouse_abc_extended/coronal_atlas_regions.json",
+        # Sync processed data into app/data/ (where the Dash app reads from)
+        "app/data/processed/mouse_abc/cells_with_coords.parquet",
+        "app/data/processed/mouse_abc_extended/cells_with_coords.parquet",
 
 # =============================================================================
 # Mouse ABC (Allen Brain Cell Census) Pipeline
@@ -84,56 +87,56 @@ rule extract_hypothalamus_connectivity:
         "python -m hypomap.preprocessing.extract_hypothalamus_connectivity"
 
 # =============================================================================
-# Mouse ABC Subcortical (HY + TH + STR + PAL) Pipeline
+# Mouse ABC Extended (HY + TH + STR + PAL + P + MY + MB) Pipeline
 # =============================================================================
 
-rule extract_mouse_abc_subcortical_metadata:
-    """Extract cell metadata from ABC MERFISH data for subcortical divisions."""
+rule extract_mouse_abc_extended_metadata:
+    """Extract cell metadata from ABC MERFISH data for extended divisions."""
     output:
-        metadata="data/processed/mouse_abc_subcortical/cell_metadata.parquet",
-        genes="data/processed/mouse_abc_subcortical/genes.parquet"
+        metadata="data/processed/mouse_abc_extended/cell_metadata.parquet",
+        genes="data/processed/mouse_abc_extended/genes.parquet"
     shell:
-        "python -m hypomap.datasets.mouse_abc --divisions HY TH STR PAL --output-dir data/processed/mouse_abc_subcortical"
+        "python -m hypomap.datasets.mouse_abc --divisions HY TH STR PAL P MY MB --output-dir data/processed/mouse_abc_extended"
 
-rule downsample_mouse_abc_subcortical:
-    """Downsample mouse ABC subcortical cells."""
+rule downsample_mouse_abc_extended:
+    """Downsample mouse ABC extended cells."""
     input:
-        "data/processed/mouse_abc_subcortical/cell_metadata.parquet"
+        "data/processed/mouse_abc_extended/cell_metadata.parquet"
     output:
-        "data/processed/mouse_abc_subcortical/cells_with_coords.parquet"
+        "data/processed/mouse_abc_extended/cells_with_coords.parquet"
     shell:
-        "python -m hypomap.preprocessing.downsample --dataset mouse_abc_subcortical"
+        "python -m hypomap.preprocessing.downsample --dataset mouse_abc_extended"
 
-rule build_lateralized_regions_subcortical:
-    """Precompute lateralized region boundaries for subcortical coronal atlas."""
+rule build_lateralized_regions_extended:
+    """Precompute lateralized region boundaries for extended coronal atlas."""
     input:
-        "data/processed/mouse_abc_subcortical/cells_with_coords.parquet"
+        "data/processed/mouse_abc_extended/cells_with_coords.parquet"
     output:
-        "data/processed/mouse_abc_subcortical/coronal_atlas_regions.json"
+        "data/processed/mouse_abc_extended/coronal_atlas_regions.json"
     shell:
-        "python -m hypomap.preprocessing.build_lateralized_regions --input data/processed/mouse_abc_subcortical/cells_with_coords.parquet --output data/processed/mouse_abc_subcortical/coronal_atlas_regions.json"
+        "python -m hypomap.preprocessing.build_lateralized_regions --input data/processed/mouse_abc_extended/cells_with_coords.parquet --output data/processed/mouse_abc_extended/coronal_atlas_regions.json"
 
-rule build_cluster_ligand_receptor_map_subcortical:
-    """Map neuropeptide and hormone ligand/receptor expression for subcortical clusters."""
+rule build_cluster_ligand_receptor_map_extended:
+    """Map neuropeptide and hormone ligand/receptor expression for extended clusters."""
     input:
-        metadata="data/processed/mouse_abc_subcortical/cell_metadata.parquet",
+        metadata="data/processed/mouse_abc_extended/cell_metadata.parquet",
         np_map="data/generated/mouse_common/np_map.csv",
         hormone_map="data/generated/mouse_common/hormone_map.csv"
     output:
-        expression="data/processed/mouse_abc_subcortical/neuropeptide_expression.parquet",
-        profiles="data/processed/mouse_abc_subcortical/cluster_ligand_receptor_profile.parquet"
+        expression="data/processed/mouse_abc_extended/neuropeptide_expression.parquet",
+        profiles="data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet"
     shell:
-        "python -m hypomap.preprocessing.build_cluster_ligand_receptor_map --use-imputed --metadata-dir data/processed/mouse_abc_subcortical"
+        "python -m hypomap.preprocessing.build_cluster_ligand_receptor_map --use-imputed --metadata-dir data/processed/mouse_abc_extended"
 
-rule build_cluster_np_expression_subcortical:
-    """Precompute cluster-system expression lookup for subcortical NP mode."""
+rule build_cluster_np_expression_extended:
+    """Precompute cluster-system expression lookup for extended NP mode."""
     input:
-        profiles="data/processed/mouse_abc_subcortical/cluster_ligand_receptor_profile.parquet",
+        profiles="data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet",
         np_map="data/generated/mouse_common/np_map.csv"
     output:
-        "data/processed/mouse_abc_subcortical/cluster_np_expression.parquet"
+        "data/processed/mouse_abc_extended/cluster_np_expression.parquet"
     shell:
-        "python -m hypomap.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_subcortical"
+        "python -m hypomap.preprocessing.build_cluster_np_expression --metadata-dir data/processed/mouse_abc_extended"
 
 # =============================================================================
 # Dash app
@@ -146,10 +149,10 @@ rule sync_app_data:
         regions="data/processed/mouse_abc/coronal_atlas_regions.json",
         lr_profile="data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet",
         np_expr="data/processed/mouse_abc/cluster_np_expression.parquet",
-        sub_cells="data/processed/mouse_abc_subcortical/cells_with_coords.parquet",
-        sub_regions="data/processed/mouse_abc_subcortical/coronal_atlas_regions.json",
-        sub_lr_profile="data/processed/mouse_abc_subcortical/cluster_ligand_receptor_profile.parquet",
-        sub_np_expr="data/processed/mouse_abc_subcortical/cluster_np_expression.parquet",
+        ext_cells="data/processed/mouse_abc_extended/cells_with_coords.parquet",
+        ext_regions="data/processed/mouse_abc_extended/coronal_atlas_regions.json",
+        ext_lr_profile="data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet",
+        ext_np_expr="data/processed/mouse_abc_extended/cluster_np_expression.parquet",
         np_map="data/generated/mouse_common/np_map.csv",
         np_blacklist="data/generated/mouse_common/np_system_blacklist.csv",
         hormone_map="data/generated/mouse_common/hormone_map.csv",
@@ -160,10 +163,10 @@ rule sync_app_data:
         regions="app/data/processed/mouse_abc/coronal_atlas_regions.json",
         lr_profile="app/data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet",
         np_expr="app/data/processed/mouse_abc/cluster_np_expression.parquet",
-        sub_cells="app/data/processed/mouse_abc_subcortical/cells_with_coords.parquet",
-        sub_regions="app/data/processed/mouse_abc_subcortical/coronal_atlas_regions.json",
-        sub_lr_profile="app/data/processed/mouse_abc_subcortical/cluster_ligand_receptor_profile.parquet",
-        sub_np_expr="app/data/processed/mouse_abc_subcortical/cluster_np_expression.parquet",
+        ext_cells="app/data/processed/mouse_abc_extended/cells_with_coords.parquet",
+        ext_regions="app/data/processed/mouse_abc_extended/coronal_atlas_regions.json",
+        ext_lr_profile="app/data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet",
+        ext_np_expr="app/data/processed/mouse_abc_extended/cluster_np_expression.parquet",
         np_map="app/data/generated/mouse_common/np_map.csv",
         np_blacklist="app/data/generated/mouse_common/np_system_blacklist.csv",
         hormone_map="app/data/generated/mouse_common/hormone_map.csv",

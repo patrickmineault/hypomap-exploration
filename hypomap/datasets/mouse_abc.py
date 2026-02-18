@@ -16,7 +16,7 @@ from .base import DatasetConfig
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 DOWNLOAD_BASE = DATA_DIR / "raw" / "abc_atlas_cache"
 PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc"
-SUBCORTICAL_PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc_subcortical"
+EXTENDED_PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc_extended"
 
 # ABC hypothalamus marker genes (mouse gene symbols)
 ABC_MARKER_GENES = [
@@ -75,8 +75,8 @@ def get_mouse_abc_config() -> DatasetConfig:
     )
 
 
-# Additional region colors for subcortical structures outside hypothalamus
-ABC_SUBCORTICAL_REGION_COLORS = {
+# Additional region colors for extended structures outside hypothalamus
+ABC_EXTENDED_REGION_COLORS = {
     **ABC_REGION_COLORS,
     # Thalamus (TH) regions
     'AD': '#1E90FF',      # Anterodorsal nucleus
@@ -114,10 +114,16 @@ ABC_SUBCORTICAL_REGION_COLORS = {
     'ACB': '#FF7F50',     # Nucleus accumbens
     'CP': '#FF6347',      # Caudoputamen
     'FS': '#FF4500',      # Fundus of striatum
-    'LSX': '#FF8C00',     # Lateral septal complex
-    'LS': '#FFA500',      # Lateral septal nucleus
     'OT': '#FFD700',      # Olfactory tubercle
-    'sAMY': '#F0E68C',    # Striatum-like amygdalar nuclei
+    'LSr': '#FFA07A',     # Lateral septal nucleus, rostral
+    'LSv': '#FF8C69',     # Lateral septal nucleus, ventral
+    'LSc': '#E9967A',     # Lateral septal nucleus, caudal
+    'CEA': '#CD5C5C',     # Central amygdalar nucleus
+    'AAA': '#BC8F8F',     # Anterior amygdalar area
+    'IA': '#F08080',      # Intercalated amygdalar nucleus
+    'SF': '#DEB887',      # Septofimbrial nucleus
+    'SH': '#D2B48C',      # Septohippocampal nucleus
+    'BA': '#C4A882',      # Bed nucleus of anterior commissure
     # Pallidum (PAL) regions
     'BST': '#DDA0DD',     # Bed nuclei of the stria terminalis
     'GPe': '#DA70D6',     # Globus pallidus, external
@@ -127,6 +133,50 @@ ABC_SUBCORTICAL_REGION_COLORS = {
     'SI': '#9400D3',      # Substantia innominata
     'MA': '#800080',      # Magnocellular nucleus
     'TRS': '#C71585',     # Triangular nucleus of septum
+    # Pons (P) and Medulla (MY) - generic unassigned
+    'P-unassigned': '#666666',
+    'MY-unassigned': '#666666',
+    # Midbrain (MB) regions
+    'MB-unassigned': '#666666',
+    'SCm': '#2E8B57',     # Superior colliculus, motor
+    'SCs': '#3CB371',     # Superior colliculus, sensory
+    'IC': '#008B8B',      # Inferior colliculus
+    'PAG': '#9932CC',     # Periaqueductal gray
+    'MRN': '#708090',     # Midbrain reticular nucleus
+    'APN': '#4682B4',     # Anterior pretectal nucleus
+    'SNr': '#8B0000',     # Substantia nigra, reticular part
+    'SNc': '#B22222',     # Substantia nigra, compact part
+    'VTA': '#DC143C',     # Ventral tegmental area
+    'PPN': '#D2691E',     # Pedunculopontine nucleus
+    'CUN': '#A0522D',     # Cuneiform nucleus
+    'RN': '#CD5C5C',      # Red nucleus
+    'IPN': '#9370DB',     # Interpeduncular nucleus
+    'NPC': '#6A5ACD',     # Nucleus of posterior commissure
+    'NOT': '#483D8B',     # Nucleus of the optic tract
+    'DR': '#FF8C00',      # Dorsal raphe nucleus
+    'PPT': '#5F9EA0',     # Posterior pretectal nucleus
+    'RR': '#BC8F8F',      # Retrorubral area
+    'NB': '#4169E1',      # Nucleus of brachium of IC
+    'SAG': '#7B68EE',     # Nucleus sagulum
+    'IF': '#FFA500',      # Interfascicular nucleus raphe
+    'CLI': '#FFD700',     # Central linear nucleus raphe
+    'PBG': '#32CD32',     # Parabigeminal nucleus
+    'AT': '#66CDAA',      # Anterior tegmental nucleus
+    'VTN': '#20B2AA',     # Ventral tegmental nucleus
+    'RL': '#DAA520',      # Rostral linear nucleus raphe
+    'MPT': '#6495ED',     # Medial pretectal area
+    'MT': '#00CED1',      # Medial terminal nucleus of accessory optic tract
+    'OP': '#1E90FF',      # Olivary pretectal nucleus
+    'LT': '#48D1CC',      # Lateral terminal nucleus of accessory optic tract
+    'III': '#FF6347',     # Oculomotor nucleus
+    'RPF': '#8FBC8F',     # Retroparafascicular nucleus
+    'SCO': '#778899',     # Subcommissural organ
+    'PN': '#DB7093',      # Paranigral nucleus
+    'Pa4': '#F4A460',     # Paratrochlear nucleus
+    'EW': '#FA8072',      # Edinger-Westphal nucleus
+    'MA3': '#E9967A',     # Medial accessory oculomotor nucleus
+    'DT': '#87CEEB',      # Dorsal terminal nucleus of accessory optic tract
+    'IV': '#FF7F50',      # Trochlear nucleus
     # Generic division-unassigned colors
     'TH-unassigned': '#666666',
     'STR-unassigned': '#666666',
@@ -134,19 +184,19 @@ ABC_SUBCORTICAL_REGION_COLORS = {
 }
 
 
-def get_mouse_abc_subcortical_config() -> DatasetConfig:
-    """Get configuration for the mouse ABC subcortical dataset (HY + TH + STR + PAL)."""
+def get_mouse_abc_extended_config() -> DatasetConfig:
+    """Get configuration for the mouse ABC extended dataset (HY + TH + STR + PAL + P + MY + MB)."""
     return DatasetConfig(
-        name="mouse_abc_subcortical",
+        name="mouse_abc_extended",
         species="Mus musculus",
         h5ad_path=DOWNLOAD_BASE,
-        processed_dir=SUBCORTICAL_PROCESSED_DIR,
+        processed_dir=EXTENDED_PROCESSED_DIR,
         cell_type_columns=['class', 'subclass', 'supertype', 'cluster'],
         region_column="region",
         gene_column=None,
         marker_genes=ABC_MARKER_GENES,
         key_receptors=ABC_KEY_RECEPTORS,
-        region_colors=ABC_SUBCORTICAL_REGION_COLORS,
+        region_colors=ABC_EXTENDED_REGION_COLORS,
     )
 
 

@@ -9,7 +9,7 @@ import dash_bootstrap_components as dbc
 
 DATASET_LABELS = {
     'mouse_abc': 'Hypothalamus',
-    'mouse_abc_subcortical': 'Subcortical',
+    'mouse_abc_extended': 'Extended',
 }
 
 
@@ -242,7 +242,7 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names
                                 region,
                                 id={'type': 'region-btn', 'index': region},
                                 n_clicks=0,
-                                title=f"{region_descriptions.get(region, {}).get('full_name', region)}: {region_descriptions.get(region, {}).get('description', 'No description available')}",
+                                title=f"[{region_descriptions.get(region, {}).get('division', '')}] {region_descriptions.get(region, {}).get('full_name', region)}: {region_descriptions.get(region, {}).get('description', 'No description available')}",
                                 className='region-chip',
                                 style={
                                     'display': 'inline-block',
