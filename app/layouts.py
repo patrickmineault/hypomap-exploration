@@ -223,6 +223,7 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names
                     options=[
                         {'label': ' Show region boundaries', 'value': 'show_boundaries'},
                         {'label': ' Show region labels', 'value': 'show_labels'},
+                        {'label': ' Show coordinate grid (1 mm)', 'value': 'show_grid'},
                     ],
                     value=['show_boundaries', 'show_labels'],
                     labelStyle={'display': 'block', 'marginBottom': '6px', 'fontSize': '0.85rem'},
@@ -299,13 +300,15 @@ def create_center_panel(default_slices=None):
     default_slices = default_slices or []
     z_min = min(default_slices) if default_slices else 0
     z_max = max(default_slices) if default_slices else 10
-    # Build marks at actual slice positions, showing label for first, last, and every ~4th
+    # Inverted AP slider: negate z values so A (positive) is on the left, P (negative) on the right
+    slider_min = -z_max  # anterior (most positive y_ras) → left
+    slider_max = -z_min  # posterior (most negative y_ras) → right
     z_marks = {}
     for i, z in enumerate(default_slices):
         if i == 0 or i == len(default_slices) - 1 or i % 4 == 0:
-            z_marks[z] = f'{z:.1f}'
+            z_marks[-z] = f'{z:.2f}'
         else:
-            z_marks[z] = ''
+            z_marks[-z] = ''
 
     return dbc.Card([
         dbc.CardHeader([
@@ -325,22 +328,22 @@ def create_center_panel(default_slices=None):
                         style={'flex': '1', 'minWidth': '80px'},
                     ),
                 ], style={'display': 'flex', 'alignItems': 'center', 'flex': '1', 'marginRight': '24px'}),
-                # Z-range slider (snaps to actual slice positions)
+                # Z-range slider (snaps to actual slice positions, negated for A-left P-right)
                 html.Div([
-                    html.Span("P", style={'fontSize': '0.75rem', 'fontWeight': '600', 'color': '#888', 'marginRight': '6px'}),
+                    html.Span("A", style={'fontSize': '0.75rem', 'fontWeight': '600', 'color': '#888', 'marginRight': '6px'}),
                     html.Div(
                         dcc.RangeSlider(
                             id='z-range',
-                            min=z_min,
-                            max=z_max,
+                            min=slider_min,
+                            max=slider_max,
                             step=None,  # snap to marks only
-                            value=[z_min, z_max],
+                            value=[slider_min, slider_max],
                             marks=z_marks,
-                            tooltip={"placement": "bottom", "always_visible": True},
+                            tooltip={"placement": "bottom", "always_visible": True, "transform": "negateValue"},
                         ),
                         style={'flex': '1', 'minWidth': '200px'},
                     ),
-                    html.Span("A", style={'fontSize': '0.75rem', 'fontWeight': '600', 'color': '#888', 'marginLeft': '6px'}),
+                    html.Span("P", style={'fontSize': '0.75rem', 'fontWeight': '600', 'color': '#888', 'marginLeft': '6px'}),
                 ], style={'display': 'flex', 'alignItems': 'center', 'flex': '3'}),
             ], style={'display': 'flex', 'alignItems': 'center', 'width': '100%'}),
         ]),

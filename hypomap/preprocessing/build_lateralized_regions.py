@@ -14,7 +14,7 @@ DEFAULT_INPUT = DATA_DIR / "processed" / "mouse_abc" / "cells_with_coords.parque
 DEFAULT_OUTPUT = DATA_DIR / "processed" / "mouse_abc" / "coronal_atlas_regions.json"
 
 # Midline X coordinate
-MIDLINE_X = 5.5
+MIDLINE_X = 0.0
 
 # Alphashape parameter (higher = tighter fit, lower = more convex)
 ALPHA = 6.0
@@ -39,7 +39,7 @@ def main(input_path=None, output_path=None):
     print(f"After removing *-unassigned: {len(df):,} cells")
 
     # Add z_slice column
-    df['z_slice'] = df['z'].round(1)
+    df['z_slice'] = df['z'].round(2)
     slices = sorted(df['z_slice'].unique())
     print(f"Found {len(slices)} slices: {slices}")
 

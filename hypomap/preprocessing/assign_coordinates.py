@@ -42,14 +42,14 @@ def assign_coordinates(
     elif dataset == "human_hypomap":
         return assign_human_coordinates(cells_df, region_col)
     elif dataset in ("mouse_abc", "mouse_abc_extended"):
-        # mouse_abc datasets already have x, y, z from reconstructed_coordinates
+        # mouse_abc datasets already have x, y, z as RAS coordinates (derived from CCF)
         if (
             "x" in cells_df.columns
             and "y" in cells_df.columns
             and "z" in cells_df.columns
         ):
             print(
-                f"  {dataset}: Using existing coordinates from ABC reconstructed_coordinates"
+                f"  {dataset}: Using existing RAS coordinates (derived from CCF)"
             )
             return cells_df
         else:

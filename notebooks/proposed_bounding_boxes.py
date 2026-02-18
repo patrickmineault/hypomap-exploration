@@ -45,7 +45,7 @@ def _(Path, json, np, pd):
     cells_df = cells_df[
         ~cells_df["region"].str.contains("unassigned", case=False)
     ].copy()
-    cells_df["z_slice"] = cells_df["z"].round(1)
+    cells_df["z_slice"] = cells_df["z"].round(2)
 
     # Compute dominant neuropeptide per cell
     _np_expr = pd.read_parquet(_data_dir / "neuropeptide_expression.parquet")
@@ -157,7 +157,7 @@ def _(math, mpatches, plt):
             ax.add_patch(rect_border)
 
             # Region boundaries
-            zr = round(z, 1)
+            zr = round(z, 2)
             if zr in boundaries:
                 for rgn, coords in boundaries[zr].items():
                     xs = [c[0] for c in coords] + [coords[0][0]]
@@ -183,7 +183,7 @@ def _(math, mpatches, plt):
                         ),
                     )
 
-            ax.set_title(f"z={z:.1f}", fontsize=9)
+            ax.set_title(f"y={z:.2f}", fontsize=9)
             ax.tick_params(labelsize=6)
             ax.set_facecolor("#f8f8f8")
             for spine in ax.spines.values():
@@ -239,8 +239,8 @@ def _(boundaries, cells_df, centroids, make_bbox_figure, mo):
         |----------|-------|
         | **X range** | {_x0:.2f} – {_x1:.2f} mm |
         | **Y range** | {_y0:.2f} – {_y1:.2f} mm |
-        | **Z slices** | {len(_sel_slices)} ({_sel_slices[0]:.1f} – {_sel_slices[-1]:.1f}) |
-        | **Box size** | {_x1 - _x0:.2f} x {_y1 - _y0:.2f} x {(_sel_slices[-1] - _sel_slices[0] + 0.2):.1f} mm |
+        | **Z slices** | {len(_sel_slices)} ({_sel_slices[0]:.2f} – {_sel_slices[-1]:.2f}) |
+        | **Box size** | {_x1 - _x0:.2f} x {_y1 - _y0:.2f} x {(_sel_slices[-1] - _sel_slices[0] + 0.2):.2f} mm |
         | **Volume** | {(_x1 - _x0) * (_y1 - _y0) * (_sel_slices[-1] - _sel_slices[0] + 0.2):.3f} mm³ |
         """
                 )

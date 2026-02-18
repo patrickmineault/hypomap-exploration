@@ -93,6 +93,7 @@ def create_slice_figure(
 
     show_boundaries = 'show_boundaries' in display_options
     show_labels = 'show_labels' in display_options
+    show_grid = 'show_grid' in display_options
 
     # Get unique categories for consistent coloring
     if mode == 'cluster':
@@ -333,6 +334,35 @@ def create_slice_figure(
     all_traces = []
     all_annotations = []
     all_shapes = []
+
+    # Coordinate grid (1 mm spacing) — added first so it renders behind everything
+    if show_grid:
+        # Compute grid range from data extent (snap to integer mm boundaries)
+        grid_x_min = int(np.floor(raw_x.min()))
+        grid_x_max = int(np.ceil(raw_x.max()))
+        grid_y_min = int(np.floor(raw_y.min()))
+        grid_y_max = int(np.ceil(raw_y.max()))
+        grid_line_style = {'color': 'rgba(200, 200, 200, 0.5)', 'width': 0.5}
+
+        for slice_idx_g, _ in enumerate(slices):
+            xaxis_g = f'x{slice_idx_g + 1}' if slice_idx_g > 0 else 'x'
+            yaxis_g = f'y{slice_idx_g + 1}' if slice_idx_g > 0 else 'y'
+            # Vertical grid lines
+            for gx in range(grid_x_min, grid_x_max + 1):
+                all_shapes.append({
+                    'type': 'line',
+                    'x0': gx, 'y0': grid_y_min, 'x1': gx, 'y1': grid_y_max,
+                    'xref': xaxis_g, 'yref': yaxis_g,
+                    'line': grid_line_style, 'layer': 'below',
+                })
+            # Horizontal grid lines
+            for gy in range(grid_y_min, grid_y_max + 1):
+                all_shapes.append({
+                    'type': 'line',
+                    'x0': grid_x_min, 'y0': gy, 'x1': grid_x_max, 'y1': gy,
+                    'xref': xaxis_g, 'yref': yaxis_g,
+                    'line': grid_line_style, 'layer': 'below',
+                })
 
     for slice_idx, z_slice in enumerate(slices):
         row = slice_idx // n_cols + 1
@@ -894,18 +924,24 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
         Input('dataset-radio', 'value'),
     )
     def update_z_range_slider(dataset_name):
-        """Update z-range slider to match the selected dataset's slices."""
+        """Update z-range slider to match the selected dataset's slices.
+
+        Slider values are negated so A (positive y_ras) is on the left
+        and P (negative y_ras) is on the right.
+        """
         ds = get_dataset(dataset_name)
         slices = ds['slices']
         z_min = slices[0]
         z_max = slices[-1]
+        slider_min = -z_max  # anterior → left
+        slider_max = -z_min  # posterior → right
         marks = {}
         for i, z in enumerate(slices):
             if i == 0 or i == len(slices) - 1 or i % 4 == 0:
-                marks[z] = f'{z:.1f}'
+                marks[-z] = f'{z:.2f}'
             else:
-                marks[z] = ''
-        return z_min, z_max, marks, [z_min, z_max]
+                marks[-z] = ''
+        return slider_min, slider_max, marks, [slider_min, slider_max]
 
     # Update subsample slider default when dataset changes
     @app.callback(
@@ -951,8 +987,9 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             """Update the slice grid visualization with region highlighting."""
             ds = get_dataset(dataset_name)
             n_cols = grid_columns or 2
-            # Filter slices by z-range
-            z_min, z_max = (z_range or [ds['slices'][0], ds['slices'][-1]])
+            # Filter slices by z-range (slider values are negated; negate back)
+            neg_lo, neg_hi = (z_range or [-ds['slices'][-1], -ds['slices'][0]])
+            z_min, z_max = -neg_hi, -neg_lo
             filtered_slices = [s for s in ds['slices'] if z_min <= s <= z_max]
             if not filtered_slices:
                 filtered_slices = ds['slices']
@@ -1003,8 +1040,9 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             """Update the slice grid visualization."""
             ds = get_dataset(dataset_name)
             n_cols = grid_columns or 2
-            # Filter slices by z-range
-            z_min, z_max = (z_range or [ds['slices'][0], ds['slices'][-1]])
+            # Filter slices by z-range (slider values are negated; negate back)
+            neg_lo, neg_hi = (z_range or [-ds['slices'][-1], -ds['slices'][0]])
+            z_min, z_max = -neg_hi, -neg_lo
             filtered_slices = [s for s in ds['slices'] if z_min <= s <= z_max]
             if not filtered_slices:
                 filtered_slices = ds['slices']

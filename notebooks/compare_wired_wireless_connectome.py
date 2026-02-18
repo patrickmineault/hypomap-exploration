@@ -117,8 +117,8 @@ def _(cell_metadata, wired_df):
 @app.cell
 def _(cell_metadata, common_regions, np, pd):
     # Compute region centroids from cell coordinates, split by hemisphere
-    # Allen CCF: x-axis is left-right, midline approximately at x=5.7
-    MIDLINE_X = 5.7
+    # RAS coordinates: x_ras is left-right, midline at x=0
+    MIDLINE_X = 0.0
 
     _region_cells = cell_metadata[cell_metadata['region'].isin(common_regions)].copy()
     _region_cells['hemisphere'] = np.where(_region_cells['x'] < MIDLINE_X, 'L', 'R')
@@ -205,9 +205,9 @@ def _(mo):
     # UI selector for sorting axis
     sort_axis_selector = mo.ui.dropdown(
         options={
-            'Posterior → Anterior (z)': 'z',
-            'Dorsal → Ventral (y)': 'y',
-            'Medial → Lateral (|x - midline|)': 'medial'
+            'Posterior → Anterior (y)': 'z',
+            'Dorsal → Ventral (z_ras)': 'y',
+            'Medial → Lateral (|x_ras|)': 'medial'
         },
         value='Posterior → Anterior (z)',
         label='Sort regions by'

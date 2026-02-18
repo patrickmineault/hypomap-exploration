@@ -34,7 +34,7 @@ def _():
 
     DATA_DIR = Path('../data')
     CELLS_PATH = DATA_DIR / 'processed' / 'mouse_abc' / 'cells_with_coords.parquet'
-    MIDLINE_X = 5.5
+    MIDLINE_X = 0.0
     return (
         CELLS_PATH,
         ConvexHull,
@@ -53,7 +53,7 @@ def _(CELLS_PATH, pd):
     # Load cell data
     cells_df = pd.read_parquet(CELLS_PATH)
     cells_df = cells_df[cells_df['region'] != 'HY-unassigned'].copy()
-    cells_df['z_slice'] = cells_df['z'].round(1)
+    cells_df['z_slice'] = cells_df['z'].round(2)
 
     available_slices = sorted(cells_df['z_slice'].unique())
     print(f"Loaded {len(cells_df):,} cells")

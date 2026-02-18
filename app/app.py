@@ -152,7 +152,7 @@ def load_cell_data(dataset_name="mouse_abc"):
     print(f"[{dataset_name}] Found {len(slices)} discrete Z slices")
 
     # Add z_slice and region_display from precomputed data
-    df["z_slice"] = df["z"].round(1)
+    df["z_slice"] = df["z"].round(2)
     df["region_display"] = (
         df["cell_id"].map(region_data["cell_regions"]).fillna(df["region"])
     )
@@ -520,7 +520,11 @@ def create_app():
 
     # Get region list from default dataset (sorted alphabetically)
     default_data = datasets[default_dataset]
-    region_list = sorted(default_data["cells_df"]["region"].unique())
+    # Collect regions from ALL datasets so the highlight list is exhaustive
+    all_regions = set()
+    for ds_data in datasets.values():
+        all_regions.update(ds_data["cells_df"]["region"].unique())
+    region_list = sorted(all_regions)
 
     # Dataset names for UI toggle
     dataset_names = list(datasets.keys())
@@ -587,7 +591,7 @@ def main():
     print("\nStarting server at http://localhost:8050")
     print("Press Ctrl+C to stop\n")
 
-    app.run(debug=True, port=8050, use_reloader=False)
+    app.run(debug=True, port=8050, use_reloader=True)
 
 
 if __name__ == "__main__":

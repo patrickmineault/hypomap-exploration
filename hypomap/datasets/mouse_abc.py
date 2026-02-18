@@ -6,6 +6,7 @@ Supports filtering to hypothalamus-only or expanded subcortical divisions.
 """
 
 import argparse
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -271,7 +272,7 @@ def extract_mouse_abc_metadata(
     ).set_index("cell_label", drop=False)
     print(f"Loaded {len(cell)} total cells")
 
-    # 2. Load reconstructed coordinates (CCF registration)
+    # 2. Load reconstructed coordinates (for slice grouping)
     print("Loading reconstructed coordinates...")
     recon = cache.get_metadata_dataframe(
         directory="MERFISH-C57BL6J-638850-CCF",
@@ -286,6 +287,20 @@ def extract_mouse_abc_metadata(
         'z': 'z_reconstructed'
     })
 
+    # 2b. Load CCF coordinates (for RAS coordinate derivation)
+    print("Loading CCF coordinates...")
+    ccf = cache.get_metadata_dataframe(
+        directory="MERFISH-C57BL6J-638850-CCF",
+        file_name="ccf_coordinates",
+        dtype={"cell_label": str}
+    ).set_index("cell_label", drop=False)
+
+    ccf = ccf.rename(columns={
+        'x': 'x_ccf',
+        'y': 'y_ccf',
+        'z': 'z_ccf'
+    })
+
     # 3. Load parcellation terms (anatomy labels)
     print("Loading parcellation terms...")
     parc_terms = cache.get_metadata_dataframe(
@@ -296,10 +311,15 @@ def extract_mouse_abc_metadata(
 
     # 4. Join tables
     print("Joining tables...")
-    # Join parcellation_index from reconstructed coordinates
-    # Both dataframes have cell_label as index, so join on index directly
+    # Join parcellation_index and reconstructed coordinates
     cell = cell.join(
         recon[["parcellation_index", "x_reconstructed", "y_reconstructed", "z_reconstructed"]],
+        how="inner"
+    )
+
+    # Join CCF coordinates
+    cell = cell.join(
+        ccf[["x_ccf", "y_ccf", "z_ccf"]],
         how="inner"
     )
 
@@ -314,17 +334,44 @@ def extract_mouse_abc_metadata(
     cell = cell[div_mask].copy()
     print(f"Filtered cells: {len(cell)}")
 
-    # 6. Rename/standardize columns for hypomap compatibility
-    # Drop original section-local coordinates (we use CCF-registered reconstructed coords)
+    # 6. Compute RAS coordinates from CCF
+    # RAS: Right-Anterior-Superior, centered at midline
+    # x_ras = z_ccf - 5.7  (mediolateral, centered at midline)
+    # z_ras = y_ccf - 5.4  (dorsoventral, centered)
+    # y_ras = per-slice discrete AP value derived from CCF x coordinate
+    print("Computing RAS coordinates from CCF...")
+    cell['x_ras'] = cell['z_ccf'] - 5.7
+    cell['z_ras'] = cell['y_ccf'] - 5.4
+
+    # Compute y_ras: for each z_recon slice, find the cell nearest (x_ras=0, z_ras=0),
+    # then derive AP value from its x_ccf coordinate
+    y_ras_map = {}
+    for z in cell['z_reconstructed'].unique():
+        slice_df = cell[cell['z_reconstructed'] == z]
+        dist = np.sqrt(slice_df['x_ras'] ** 2 + slice_df['z_ras'] ** 2)
+        origin_x_ccf = slice_df.loc[dist.idxmin(), 'x_ccf']
+        y_ras_map[z] = -(np.round(origin_x_ccf, 2) - 6.78) - 1.77
+    cell['y_ras'] = cell['z_reconstructed'].map(y_ras_map)
+
+    print(f"  x_ras range: {cell['x_ras'].min():.2f} to {cell['x_ras'].max():.2f}")
+    print(f"  z_ras range: {cell['z_ras'].min():.2f} to {cell['z_ras'].max():.2f}")
+    print(f"  y_ras unique values: {sorted(cell['y_ras'].unique())}")
+
+    # Drop original section-local coordinates and intermediate columns
     cols_to_drop = [c for c in ['x', 'y', 'z'] if c in cell.columns]
     if cols_to_drop:
         cell = cell.drop(columns=cols_to_drop)
+    cell = cell.drop(columns=[
+        'x_reconstructed', 'y_reconstructed', 'z_reconstructed',
+        'x_ccf', 'y_ccf', 'z_ccf',
+    ])
 
+    # Rename RAS to standard x, y, z columns
     cell = cell.rename(columns={
         'cell_label': 'cell_id',
-        'x_reconstructed': 'x',
-        'y_reconstructed': 'y',
-        'z_reconstructed': 'z',
+        'x_ras': 'x',       # mediolateral (horizontal in coronal view)
+        'z_ras': 'y',       # dorsoventral (vertical in coronal view)
+        'y_ras': 'z',       # anteroposterior (slicing axis)
         'parcellation_structure': 'region',
         'donor_label': 'donor_id',
         'brain_section_label': 'sample_id',

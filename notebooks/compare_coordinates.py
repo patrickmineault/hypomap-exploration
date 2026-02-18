@@ -74,7 +74,7 @@ def _(coords, mo):
     return (slice_dropdown,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(coords, np, slice_dropdown):
     import matplotlib.pyplot as plt
     import matplotlib
@@ -90,12 +90,18 @@ def _(coords, np, slice_dropdown):
     if _n > _max_pts:
         _slice_df = _slice_df.sample(_max_pts, random_state=42)
 
+    # Assign a deterministic random color per parcellation_index
+    _unique_idx = np.sort(_slice_df.parcellation_index.unique())
+    _rng = np.random.RandomState(0)
+    _color_map = {idx: plt.cm.tab20(_rng.random()) for idx in _unique_idx}
+    _colors = _slice_df.parcellation_index.map(_color_map).values
+
     _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
     # Plot 1: Reconstructed (x_recon=ML vs y_recon=DV)
-    _ax1.scatter(_slice_df.x_recon, _slice_df.y_recon, s=0.3, alpha=0.3, c='steelblue', rasterized=True)
+    _ax1.scatter(_slice_df.x_recon, _slice_df.y_recon, s=0.3, alpha=0.3, c=_colors, rasterized=True)
     _ax1.axvline(5.7, color='red', lw=0.8, ls='--', alpha=0.7)
-    _ax1.axhline(5.3, color='red', lw=0.8, ls='--', alpha=0.7)
+    _ax1.axhline(5.4, color='red', lw=0.8, ls='--', alpha=0.7)
     _ax1.plot(5.7, 5.4, 'r+', ms=12, mew=2)
     _ax1.set_xlabel('x_recon (ML, mm)')
     _ax1.set_ylabel('y_recon (DV, mm)')
@@ -104,7 +110,7 @@ def _(coords, np, slice_dropdown):
     _ax1.invert_yaxis()
 
     # Plot 2: CCF (z_ccf=ML vs y_ccf=DV)
-    _ax2.scatter(_slice_df.z_ccf, _slice_df.y_ccf, s=0.3, alpha=0.3, c='darkorange', rasterized=True)
+    _ax2.scatter(_slice_df.z_ccf, _slice_df.y_ccf, s=0.3, alpha=0.3, c=_colors, rasterized=True)
     _ax2.axvline(5.7, color='red', lw=0.8, ls='--', alpha=0.7)
     _ax2.axhline(5.4, color='red', lw=0.8, ls='--', alpha=0.7)
     _ax2.plot(5.7, 5.4, 'r+', ms=12, mew=2)
@@ -132,7 +138,24 @@ def _(coords, np, slice_dropdown):
 
 @app.cell
 def _(coords, np):
-    coords[np.round(coords.z_recon*10) == 64]
+    df = coords.copy()
+    df['x_ras'] = df['z_ccf'] - 5.7
+    df['z_ras'] = df['y_ccf'] - 5.4
+
+    # For each z_recon slice, find x_ccf at the (x_ras, z_ras) origin
+    _origin_x_ccf = {}
+    for _z in df['z_recon'].unique():
+        _slice = df[df['z_recon'] == _z]
+        _dist = np.sqrt(_slice['x_ras'] ** 2 + _slice['z_ras'] ** 2)
+        _origin_x_ccf[_z] = -(np.round(_slice.loc[_dist.idxmin(), 'x_ccf'], 2) - 6.78) - 1.77
+
+    df['y_ras'] = df['z_recon'].map(_origin_x_ccf)
+    _origin_x_ccf
+    return
+
+
+@app.cell
+def _():
     return
 
 

@@ -177,7 +177,7 @@ def build_diversity_sats(div_grids, count_grids, nx, ny):
 
 def find_max_mean_diversity_box(sum_sats, count_sats, grid_geo, z_slices,
                                  n_slices, volume_um3, symmetry,
-                                 midline_x=5.5):
+                                 midline_x=0.0):
     """Find the 3D box with maximum mean local diversity.
 
     Instead of computing diversity of the box contents, this finds the box
