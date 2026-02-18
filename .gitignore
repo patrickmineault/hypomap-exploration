@@ -1,8 +1,6 @@
 # Data directories (large files)
 data/raw
-data/processed/human_hypomap
-data/processed/mouse_hypomap
-data/processed/mouse_abc_subcortical
+data/processed/
 sidequests/
 notebooks/__marimo__
 __marimo__
