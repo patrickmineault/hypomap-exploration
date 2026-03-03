@@ -23,10 +23,10 @@ SHARED_FILES = [
 ]
 
 # Per-dataset files
-DATASETS = ["mouse_abc", "mouse_abc_extended"]
+DATASETS = ["mouse_abc", "mouse_abc_extended", "mouse_abc_whole_brain", "mouse_langlieb"]
 PER_DATASET_FILES = [
     "processed/{dataset}/cells_with_coords.parquet",
-    "processed/{dataset}/coronal_atlas_regions.json",
+    "processed/{dataset}/coronal_atlas_regions.msgpack",
     "processed/{dataset}/cluster_ligand_receptor_profile.parquet",
     "processed/{dataset}/cluster_np_expression.parquet",
 ]
@@ -56,7 +56,36 @@ def main():
         copied += 1
         print(f"  COPIED   {rel_path}  ({size / 1024 / 1024:.1f} MB)")
 
-    print(f"\nDone: {copied}/{len(all_files)} files, {total_bytes / 1024 / 1024:.1f} MB total")
+    print(f"\nCopied: {copied}/{len(all_files)} files, {total_bytes / 1024 / 1024:.1f} MB total")
+
+    # Delete files in DST that are not in the manifest
+    expected = {Path(rel) for rel in all_files}
+    removed = 0
+    for dst_file in DST.rglob("*"):
+        if not dst_file.is_file():
+            continue
+        rel = dst_file.relative_to(DST)
+        if rel not in expected:
+            dst_file.unlink()
+            removed += 1
+            print(f"  DELETED  {rel}")
+
+    # Remove empty directories left behind
+    for dst_dir in sorted(DST.rglob("*"), reverse=True):
+        if dst_dir.is_dir() and not any(dst_dir.iterdir()):
+            dst_dir.rmdir()
+
+    print(f"Deleted: {removed} stale files")
+
+    # Check total app/ directory size
+    app_dir = REPO_ROOT / "app"
+    app_bytes = sum(f.stat().st_size for f in app_dir.rglob("*") if f.is_file())
+    app_mb = app_bytes / 1024 / 1024
+    print(f"\nTotal app/ size: {app_mb:.1f} MB")
+    if app_mb > 200:
+        print(f"\033[91mERROR: app/ is {app_mb:.0f} MB — too large for Plotly Cloud (200 MB limit)\033[0m")
+    elif app_mb > 150:
+        print(f"\033[93mWARNING: app/ is {app_mb:.0f} MB — approaching Plotly Cloud 200 MB limit\033[0m")
 
 
 if __name__ == "__main__":
