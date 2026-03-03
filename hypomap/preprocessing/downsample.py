@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -13,6 +14,22 @@ from hypomap.datasets import detect_cell_type_levels, detect_region_column, get_
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
+
+# Columns to keep in the final parquet (everything else is dropped)
+KEEP_COLUMNS = [
+    "cell_id",
+    "x",
+    "y",
+    "z",
+    "class",
+    "subclass",
+    "supertype",
+    "cluster",
+    "region",
+    "parcellation_division",
+    "parcellation_substructure",
+    "is_neuron",
+]
 
 
 def stratified_downsample(df, stratify_cols, target_n=50000, min_per_group=10):
@@ -156,6 +173,19 @@ def run_downsampling(
     else:
         print("Skipping coordinate assignment")
 
+    # Drop unused columns and downcast floats to save space
+    # Reset index to avoid storing duplicate cell_label index
+    if downsampled.index.name:
+        downsampled = downsampled.reset_index(drop=True)
+    keep = [c for c in KEEP_COLUMNS if c in downsampled.columns]
+    dropped = sorted(set(downsampled.columns) - set(keep))
+    if dropped:
+        print(f"\nDropping {len(dropped)} unused columns: {', '.join(dropped)}")
+    downsampled = downsampled[keep]
+    for col in ("x", "y", "z"):
+        if col in downsampled.columns:
+            downsampled[col] = downsampled[col].astype(np.float32)
+
     # Save result
     output_path = config.cells_with_coords_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,7 +214,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", "-d",
         default="mouse_hypomap",
-        choices=["mouse_hypomap", "human_hypomap", "mouse_abc", "mouse_abc_extended"],
+        choices=["mouse_hypomap", "human_hypomap", "mouse_abc", "mouse_abc_extended", "mouse_abc_whole_brain"],
         help="Dataset to process (default: mouse_hypomap)"
     )
     parser.add_argument(
