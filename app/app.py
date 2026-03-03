@@ -1,6 +1,6 @@
 """Main Dash application for HypoMap Coronal Atlas Viewer."""
 
-import json
+import msgpack
 import sys
 from pathlib import Path
 
@@ -41,7 +41,7 @@ HORMONE_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "hormone_map.csv"
 DATASET_PATHS = {
     "mouse_abc": {
         "cells": DATA_DIR / "processed" / "mouse_abc" / "cells_with_coords.parquet",
-        "regions": DATA_DIR / "processed" / "mouse_abc" / "coronal_atlas_regions.json",
+        "regions": DATA_DIR / "processed" / "mouse_abc" / "coronal_atlas_regions.msgpack",
         "lr_profile": DATA_DIR
         / "processed"
         / "mouse_abc"
@@ -59,7 +59,7 @@ DATASET_PATHS = {
         "regions": DATA_DIR
         / "processed"
         / "mouse_abc_extended"
-        / "coronal_atlas_regions.json",
+        / "coronal_atlas_regions.msgpack",
         "lr_profile": DATA_DIR
         / "processed"
         / "mouse_abc_extended"
@@ -67,6 +67,39 @@ DATASET_PATHS = {
         "np_expr": DATA_DIR
         / "processed"
         / "mouse_abc_extended"
+        / "cluster_np_expression.parquet",
+    },
+    "mouse_abc_whole_brain": {
+        "cells": DATA_DIR
+        / "processed"
+        / "mouse_abc_whole_brain"
+        / "cells_with_coords.parquet",
+        "regions": DATA_DIR
+        / "processed"
+        / "mouse_abc_whole_brain"
+        / "coronal_atlas_regions.msgpack",
+        "lr_profile": DATA_DIR
+        / "processed"
+        / "mouse_abc_whole_brain"
+        / "cluster_ligand_receptor_profile.parquet",
+        "np_expr": DATA_DIR
+        / "processed"
+        / "mouse_abc_whole_brain"
+        / "cluster_np_expression.parquet",
+    },
+    "mouse_langlieb": {
+        "cells": DATA_DIR / "processed" / "mouse_langlieb" / "cells_with_coords.parquet",
+        "regions": DATA_DIR
+        / "processed"
+        / "mouse_langlieb"
+        / "coronal_atlas_regions.msgpack",
+        "lr_profile": DATA_DIR
+        / "processed"
+        / "mouse_langlieb"
+        / "cluster_ligand_receptor_profile.parquet",
+        "np_expr": DATA_DIR
+        / "processed"
+        / "mouse_langlieb"
         / "cluster_np_expression.parquet",
     },
 }
@@ -119,6 +152,8 @@ CCF_REGION_COLORS = load_ccf_region_colors()
 DATASET_REGION_COLORS = {
     "mouse_abc": CCF_REGION_COLORS,
     "mouse_abc_extended": CCF_REGION_COLORS,
+    "mouse_abc_whole_brain": CCF_REGION_COLORS,
+    "mouse_langlieb": CCF_REGION_COLORS,
 }
 
 
@@ -144,25 +179,34 @@ def load_cell_data(dataset_name="mouse_abc"):
     df = df[~unassigned_mask].copy()
     print(f"[{dataset_name}] After removing *-unassigned: {len(df):,} cells")
 
-    # Load precomputed region data
-    with open(regions_path, "r") as f:
-        region_data = json.load(f)
+    # Load precomputed region data (compact msgpack with float32 binary arrays)
+    with open(regions_path, "rb") as f:
+        region_data = msgpack.unpackb(f.read(), raw=False)
 
-    slices = region_data["slices"]
+    slices = [round(s, 2) for s in region_data["slices"]]
     print(f"[{dataset_name}] Found {len(slices)} discrete Z slices")
 
-    # Add z_slice and region_display from precomputed data
-    df["z_slice"] = df["z"].round(2)
-    df["region_display"] = (
-        df["cell_id"].map(region_data["cell_regions"]).fillna(df["region"])
-    )
+    # Unpack float32 boundary and centroid bytes (round keys to avoid float32→64 noise)
+    boundaries = {}
+    for k, regions in region_data["boundaries"].items():
+        boundaries[round(float(k), 2)] = {
+            r: np.frombuffer(buf, dtype=np.float32).reshape(-1, 2).tolist()
+            for r, buf in regions.items()
+        }
+    centroids = {}
+    for k, regions in region_data["centroids"].items():
+        centroids[round(float(k), 2)] = {
+            r: tuple(np.frombuffer(buf, dtype=np.float32).tolist())
+            for r, buf in regions.items()
+        }
 
-    # Convert boundaries/centroids keys back to float
-    boundaries = {float(k): v for k, v in region_data["boundaries"].items()}
-    centroids = {
-        float(k): {r: tuple(c) for r, c in regions.items()}
-        for k, regions in region_data["centroids"].items()
-    }
+    # Ensure z_slice is float64 (parquet may store float32, which breaks == with float64 keys)
+    if "z_slice" in df.columns:
+        df["z_slice"] = df["z_slice"].astype(np.float64).round(2)
+    else:
+        df["z_slice"] = df["z"].astype(np.float64).round(2)
+    if "region_display" not in df.columns:
+        df["region_display"] = df["region"]
 
     return df, slices, boundaries, centroids
 
@@ -319,25 +363,34 @@ def load_hormone_systems():
 
 def load_cluster_expression(dataset_name="mouse_abc"):
     """Load cluster-level ligand/receptor expression profiles."""
-    lr_profile_path = DATASET_PATHS[dataset_name]["lr_profile"]
+    paths = DATASET_PATHS[dataset_name]
+    if "lr_profile" not in paths:
+        return {}
+    lr_profile_path = paths["lr_profile"]
     if not lr_profile_path.exists():
         print(f"Warning: Cluster expression not found at {lr_profile_path}")
         return {}
 
     df = pd.read_parquet(lr_profile_path)
 
-    # Create nested dict: cluster -> gene -> expression info
+    # Vectorized nested dict build: cluster -> gene -> expression info
+    clusters = df["cluster"].values
+    genes = df["gene"].values
+    mean_exprs = df["mean_expr"].values
+    pct_exprs = df["pct_expressing"].values
+    is_ligands = df["is_ligand"].values
+    is_receptors = df["is_receptor"].values
+
     cluster_expr = {}
-    for _, row in df.iterrows():
-        cluster = row["cluster"]
-        gene = row["gene"]
-        if cluster not in cluster_expr:
-            cluster_expr[cluster] = {}
-        cluster_expr[cluster][gene] = {
-            "mean_expr": float(row["mean_expr"]),
-            "pct_expressing": float(row["pct_expressing"]),
-            "is_ligand": bool(row["is_ligand"]),
-            "is_receptor": bool(row["is_receptor"]),
+    for i in range(len(df)):
+        c = clusters[i]
+        if c not in cluster_expr:
+            cluster_expr[c] = {}
+        cluster_expr[c][genes[i]] = {
+            "mean_expr": float(mean_exprs[i]),
+            "pct_expressing": float(pct_exprs[i]),
+            "is_ligand": bool(is_ligands[i]),
+            "is_receptor": bool(is_receptors[i]),
         }
 
     print(f"Loaded expression profiles for {len(cluster_expr)} clusters")
@@ -401,7 +454,10 @@ def load_cluster_np_expression(dataset_name="mouse_abc"):
 
     Returns a dict: system -> cluster -> (max_ligand_expr, max_receptor_expr)
     """
-    np_expr_path = DATASET_PATHS[dataset_name]["np_expr"]
+    paths = DATASET_PATHS[dataset_name]
+    if "np_expr" not in paths:
+        return {}
+    np_expr_path = paths["np_expr"]
     if not np_expr_path.exists():
         print(f"Warning: Cluster NP expression not found at {np_expr_path}")
         print("Run: uv run python -m hypomap.preprocessing.build_cluster_np_expression")
@@ -409,17 +465,18 @@ def load_cluster_np_expression(dataset_name="mouse_abc"):
 
     df = pd.read_parquet(np_expr_path)
 
-    # Build lookup: system -> cluster -> (ligand, receptor)
+    # Vectorized lookup build: system -> cluster -> (ligand, receptor)
+    systems = df["system"].values
+    clusters = df["cluster"].values
+    ligands = df["max_ligand_expr"].values
+    receptors = df["max_receptor_expr"].values
+
     lookup = {}
-    for _, row in df.iterrows():
-        system = row["system"]
-        cluster = row["cluster"]
-        if system not in lookup:
-            lookup[system] = {}
-        lookup[system][cluster] = (
-            float(row["max_ligand_expr"]),
-            float(row["max_receptor_expr"]),
-        )
+    for i in range(len(df)):
+        s = systems[i]
+        if s not in lookup:
+            lookup[s] = {}
+        lookup[s][clusters[i]] = (float(ligands[i]), float(receptors[i]))
 
     print(f"Loaded NP expression lookup for {len(lookup)} systems")
     return lookup
@@ -453,6 +510,16 @@ def load_dataset_bundle(dataset_name):
             f"[{dataset_name}] Auto-assigned colors for {len(missing_regions)} new regions"
         )
 
+    # Detect per-dataset cell type levels
+    from hypomap.datasets.loader import detect_cell_type_levels
+    cell_type_levels = detect_cell_type_levels(cells_df)
+
+    # Build per-dataset NT mapping from neurotransmitter column if present
+    ds_nt_mapping = None
+    if "neurotransmitter" in cells_df.columns and "cluster" in cells_df.columns:
+        nt_pairs = cells_df[["cluster", "neurotransmitter"]].drop_duplicates()
+        ds_nt_mapping = dict(zip(nt_pairs["cluster"], nt_pairs["neurotransmitter"]))
+
     return {
         "cells_df": cells_df,
         "slices": slices,
@@ -462,6 +529,8 @@ def load_dataset_bundle(dataset_name):
         "cluster_np_expression": cluster_np_expression,
         "gene_quantiles": gene_quantiles,
         "region_colors": region_colors,
+        "cell_type_levels": cell_type_levels,
+        "nt_mapping": ds_nt_mapping,
     }
 
 
@@ -515,8 +584,13 @@ def create_app():
         "region_descriptions": region_descriptions,
     }
 
-    # Get hierarchy levels
-    cell_type_levels = ["class", "subclass", "supertype", "cluster"]
+    # Get hierarchy levels (union across all loaded datasets)
+    all_levels = []
+    for ds_data in datasets.values():
+        for lvl in ds_data.get("cell_type_levels", []):
+            if lvl not in all_levels:
+                all_levels.append(lvl)
+    cell_type_levels = all_levels or ["class", "subclass", "supertype", "cluster"]
 
     # Get region list from default dataset (sorted alphabetically)
     default_data = datasets[default_dataset]

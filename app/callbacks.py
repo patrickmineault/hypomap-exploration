@@ -95,6 +95,13 @@ def create_slice_figure(
     show_labels = 'show_labels' in display_options
     show_grid = 'show_grid' in display_options
 
+    # Fall back to finest available level if requested level is missing
+    if cluster_level not in cells_df.columns:
+        for fallback in ['cluster', 'neurotransmitter']:
+            if fallback in cells_df.columns:
+                cluster_level = fallback
+                break
+
     # Get unique categories for consistent coloring
     if mode == 'cluster':
         unique_categories = sorted(cells_df[cluster_level].dropna().unique())
@@ -720,13 +727,13 @@ def create_cell_details(click_data, cells_df, nt_mapping, cluster_expression, re
             html.P(cluster_name, className="fw-bold mb-2", style={'fontSize': '0.9rem'}),
         ]),
 
-        # Hierarchy
+        # Hierarchy (dynamic based on available columns)
         html.Div([
             html.H6("Cell Type Hierarchy", className="text-muted mb-1"),
             html.Ul([
-                html.Li(f"Class: {cell_info.get('class', 'NA')}", style={'fontSize': '0.85rem'}),
-                html.Li(f"Subclass: {cell_info.get('subclass', 'NA')}", style={'fontSize': '0.85rem'}),
-                html.Li(f"Supertype: {cell_info.get('supertype', 'NA')}", style={'fontSize': '0.85rem'}),
+                html.Li(f"{col.capitalize()}: {cell_info.get(col, 'NA')}", style={'fontSize': '0.85rem'})
+                for col in ['class', 'subclass', 'supertype', 'neurotransmitter']
+                if col in cells_df.columns
             ], className="mb-2", style={'paddingLeft': '1.2rem'}),
         ]),
 
@@ -1001,6 +1008,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             fig_height = min(16000, max(800, int(n_rows * subplot_size)))
             # Default subsample scales with dataset size (target ~60k points)
             default_subsample = max(5, min(30, int(60000 / len(cells_df) * 100)))
+            ds_nt_mapping = ds.get('nt_mapping') or nt_mapping
             fig = create_slice_figure(
                 cells_df=cells_df,
                 slices=filtered_slices,
@@ -1015,7 +1023,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 subsample_pct=subsample_pct or default_subsample,
                 diffusion_enabled=diffusion_enabled,
                 diffusion_range=diffusion_range or 0.5,
-                nt_mapping=nt_mapping,
+                nt_mapping=ds_nt_mapping,
                 np_systems=np_systems,
                 hormone_systems=hormone_systems,
                 cluster_expression=ds['cluster_expression'],
@@ -1054,6 +1062,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             fig_height = min(16000, max(800, int(n_rows * subplot_size)))
             # Default subsample scales with dataset size (target ~60k points)
             default_subsample = max(5, min(30, int(60000 / len(cells_df) * 100)))
+            ds_nt_mapping = ds.get('nt_mapping') or nt_mapping
             fig = create_slice_figure(
                 cells_df=cells_df,
                 slices=filtered_slices,
@@ -1068,7 +1077,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 subsample_pct=subsample_pct or default_subsample,
                 diffusion_enabled=diffusion_enabled,
                 diffusion_range=diffusion_range or 0.5,
-                nt_mapping=nt_mapping,
+                nt_mapping=ds_nt_mapping,
                 np_systems=np_systems,
                 hormone_systems=hormone_systems,
                 cluster_expression=ds['cluster_expression'],
@@ -1105,10 +1114,11 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
         def update_details_experimental(click_data, use_quantile, dataset_name):
             """Update cell details on click (with quantile support)."""
             ds = get_dataset(dataset_name)
+            ds_nt_mapping = ds.get('nt_mapping') or nt_mapping
             return create_cell_details(
                 click_data,
                 ds['cells_df'],
-                nt_mapping,
+                ds_nt_mapping,
                 ds['cluster_expression'],
                 region_descriptions,
                 gene_info,
@@ -1126,10 +1136,11 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
         def update_details(click_data, dataset_name):
             """Update cell details on click."""
             ds = get_dataset(dataset_name)
+            ds_nt_mapping = ds.get('nt_mapping') or nt_mapping
             return create_cell_details(
                 click_data,
                 ds['cells_df'],
-                nt_mapping,
+                ds_nt_mapping,
                 ds['cluster_expression'],
                 region_descriptions,
                 gene_info,

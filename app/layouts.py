@@ -8,8 +8,10 @@ import dash_bootstrap_components as dbc
 
 
 DATASET_LABELS = {
-    'mouse_abc': 'Hypothalamus',
-    'mouse_abc_extended': 'Extended',
+    'mouse_abc': 'ABC: Hypothalamus',
+    'mouse_abc_extended': 'ABC: Extended',
+    'mouse_abc_whole_brain': 'ABC: Whole-mouse brain',
+    'mouse_langlieb': 'Langlieb et al.',
 }
 
 
