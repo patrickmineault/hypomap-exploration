@@ -18,6 +18,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 DOWNLOAD_BASE = DATA_DIR / "raw" / "abc_atlas_cache"
 PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc"
 EXTENDED_PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc_extended"
+WHOLE_BRAIN_PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc_whole_brain"
 
 # ABC hypothalamus marker genes (mouse gene symbols)
 ABC_MARKER_GENES = [
@@ -201,6 +202,22 @@ def get_mouse_abc_extended_config() -> DatasetConfig:
     )
 
 
+def get_mouse_abc_whole_brain_config() -> DatasetConfig:
+    """Get configuration for the mouse ABC whole-brain dataset (all divisions)."""
+    return DatasetConfig(
+        name="mouse_abc_whole_brain",
+        species="Mus musculus",
+        h5ad_path=DOWNLOAD_BASE,
+        processed_dir=WHOLE_BRAIN_PROCESSED_DIR,
+        cell_type_columns=['class', 'subclass', 'supertype', 'cluster'],
+        region_column="region",
+        gene_column=None,
+        marker_genes=ABC_MARKER_GENES,
+        key_receptors=ABC_KEY_RECEPTORS,
+        region_colors=ABC_EXTENDED_REGION_COLORS,
+    )
+
+
 def classify_neurons(metadata: pd.DataFrame) -> pd.Series:
     """Classify cells as neuronal or non-neuronal.
 
@@ -328,11 +345,15 @@ def extract_mouse_abc_metadata(
 
     print(f"After joining: {len(cell)} cells")
 
-    # 5. Filter to requested divisions
-    print(f"Filtering to divisions: {divisions}...")
-    div_mask = cell['parcellation_division'].isin(divisions)
-    cell = cell[div_mask].copy()
-    print(f"Filtered cells: {len(cell)}")
+    # 5. Filter to requested divisions (skip if empty = all divisions)
+    if divisions:
+        print(f"Filtering to divisions: {divisions}...")
+        div_mask = cell['parcellation_division'].isin(divisions)
+        cell = cell[div_mask].copy()
+        print(f"Filtered cells: {len(cell)}")
+    else:
+        print("Including all divisions (no filter)")
+        print(f"Total cells: {len(cell)}")
 
     # 6. Compute RAS coordinates from CCF
     # RAS: Right-Anterior-Superior, centered at midline
@@ -451,6 +472,11 @@ if __name__ == "__main__":
         help="Parcellation divisions to include (default: HY)",
     )
     parser.add_argument(
+        "--all-divisions",
+        action="store_true",
+        help="Include all divisions (overrides --divisions)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -458,8 +484,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    divisions = [] if args.all_divisions else args.divisions
     metadata = extract_mouse_abc_metadata(
-        divisions=args.divisions,
+        divisions=divisions,
         output_dir=args.output_dir,
     )
     print_mouse_abc_summary(metadata)

@@ -41,7 +41,7 @@ def assign_coordinates(
         return assign_mouse_coordinates(cells_df, region_col)
     elif dataset == "human_hypomap":
         return assign_human_coordinates(cells_df, region_col)
-    elif dataset in ("mouse_abc", "mouse_abc_extended"):
+    elif dataset in ("mouse_abc", "mouse_abc_extended", "mouse_abc_whole_brain"):
         # mouse_abc datasets already have x, y, z as RAS coordinates (derived from CCF)
         if (
             "x" in cells_df.columns
