@@ -342,7 +342,7 @@ rule run_cnmf_prepare:
     output:
         directory("data/processed/mouse_abc/cnmf/hypo_cnmf")
     shell:
-        "python -m hypomap.preprocessing.run_cnmf --step prepare --k-values 50 --n-iter 100"
+        "python scripts/run_cnmf.py --step prepare --k-values 50 --n-iter 100"
 
 rule cnmf:
     """Convenience target: prepare cNMF locally (factorize runs on cloud)."""
