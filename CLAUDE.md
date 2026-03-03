@@ -32,14 +32,14 @@ uv run python -m app.app
 When modifying any preprocessing code:
 1. Update the relevant rule in `Snakefile`
 2. Run `uv run snakemake -n` to verify the DAG
-3. Run `uv run snakemake --cores 1` to regenerate outputs
+3. Run `uv run snakemake --cores all` to regenerate outputs
 
 ```bash
 # Check what needs to run
 uv run snakemake -n
 
 # Run full pipeline
-uv run snakemake --cores 1
+uv run snakemake --cores all
 ```
 
 If you add a new preprocessing step, add a corresponding rule to the Snakefile with proper input/output declarations.
