@@ -22,7 +22,7 @@ DATA_DIR = REPO_ROOT / "data" / "processed" / "mouse_abc_extended"
 DATA_FILES = [
     DATA_DIR / "cells_with_coords.parquet",
     DATA_DIR / "neuropeptide_expression.parquet",
-    DATA_DIR / "coronal_atlas_regions.json",
+    DATA_DIR / "coronal_atlas_regions.msgpack",
 ]
 
 LOCAL_MODULES = []
@@ -41,12 +41,6 @@ def rewrite_notebook(source_text: str) -> str:
         out,
     )
 
-    # Add mo to the data-loading cell's parameters (needed for mo.notebook_location)
-    out = out.replace(
-        "def _(Path, json, np, pd):",
-        "def _(Path, json, mo, np, pd):",
-    )
-
     # Remove the unused hypomap.diversity import block
     out = re.sub(
         r"    from hypomap\.diversity import \(\n(?:        .+\n)*    \)\n",
@@ -59,7 +53,7 @@ def rewrite_notebook(source_text: str) -> str:
         "@app.cell(hide_code=True)\n"
         "def _():\n"
         "    import micropip\n"
-        '    await micropip.install("plotly")\n'
+        '    await micropip.install(["plotly", "msgpack"])\n'
         "    return\n"
         "\n"
         "\n"
