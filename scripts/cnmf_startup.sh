@@ -11,6 +11,7 @@
 # All output is logged to /var/log/cnmf.log (also visible via serial console).
 
 set -uo pipefail
+export HOME="${HOME:-/root}"
 
 LOG=/var/log/cnmf.log
 exec > >(tee -a "$LOG") 2>&1
