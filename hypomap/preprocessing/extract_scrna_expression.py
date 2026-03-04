@@ -10,8 +10,10 @@ Output:
 
 Usage:
     python -m hypomap.preprocessing.extract_scrna_expression
+    python -m hypomap.preprocessing.extract_scrna_expression --max-cells 500
 """
 
+import argparse
 from pathlib import Path
 
 import anndata
@@ -51,8 +53,22 @@ METADATA_COLS = [
 ]
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--max-cells",
+        type=int,
+        default=None,
+        help="Limit extraction to N cells (for trial runs on small VMs)",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     print("=== Extracting 10Xv3 scRNA-seq Expression for Hypothalamus ===\n")
+    if args.max_cells is not None:
+        print(f"*** LIMITED TO {args.max_cells} CELLS (--max-cells) ***\n")
 
     # 1. Initialize cache
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -126,6 +142,12 @@ def main():
             "No hypothalamus cells found in the expression h5ad. "
             "Check that cell_label indexing is consistent."
         )
+
+    # 7b. Subsample if --max-cells is set
+    if args.max_cells is not None and len(cell_indices) > args.max_cells:
+        rng = np.random.default_rng(42)
+        cell_indices = np.sort(rng.choice(cell_indices, size=args.max_cells, replace=False))
+        print(f"  Subsampled to {len(cell_indices)} cells (--max-cells {args.max_cells})")
 
     # 8. Read expression in chunks
     print(f"\nReading expression in chunks of {CHUNK_SIZE}...")

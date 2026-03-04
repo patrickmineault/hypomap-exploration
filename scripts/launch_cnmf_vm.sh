@@ -36,7 +36,7 @@ BOOT_DISK_SIZE="100GB"
 GCS_BUCKET="gs://neuroai-abc"
 
 if [ "$TRIAL_RUN" = "true" ]; then
-    MACHINE_TYPE="e2-highmem-4"  # 4 vCPU, 32 GB — plenty for 500 cells
+    MACHINE_TYPE="e2-highmem-8"  # 8 vCPU, 64 GB — ABC metadata loading needs headroom
     INSTANCE_NAME="cnmf-trial"
 fi
 
@@ -51,9 +51,9 @@ echo "Machine: $MACHINE_TYPE"
 echo ""
 
 # --- 1. Create GCS bucket if needed ---
-if ! gsutil ls "$GCS_BUCKET" &>/dev/null; then
+if ! gcloud storage ls "$GCS_BUCKET" &>/dev/null; then
     echo "Creating GCS bucket ${GCS_BUCKET}..."
-    gsutil mb -l us-central1 "$GCS_BUCKET"
+    gcloud storage buckets create "$GCS_BUCKET" --location=us-central1
 fi
 
 # --- 2. Create Spot VM ---
@@ -85,7 +85,7 @@ echo "  # Check if VM is still running:"
 echo "  gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE --format='value(status)'"
 echo ""
 echo "  # Download results when done:"
-echo "  gsutil -m cp -r ${GCS_BUCKET}/cnmf_output/ data/processed/mouse_abc/cnmf/"
+echo "  gcloud storage cp -r ${GCS_BUCKET}/cnmf_output/ data/processed/mouse_abc/cnmf/"
 echo ""
 echo "  # Delete VM manually (if needed):"
 echo "  gcloud compute instances delete $INSTANCE_NAME --zone=$ZONE --quiet"

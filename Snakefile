@@ -88,9 +88,9 @@ rule build_cluster_np_expression:
         "python -m hypomap.preprocessing.build_cluster_np_expression"
 
 rule extract_scrna_expression:
-    """Download 10Xv3 scRNA-seq expression for hypothalamus cells (log2CPM)."""
+    """Download 10Xv3 scRNA-seq expression for hypothalamus cells (CPM h5ad)."""
     output:
-        expression="data/processed/mouse_abc/scrna_expression_log2cpm.parquet",
+        h5ad="data/processed/mouse_abc/scrna_expression_cpm.h5ad",
         metadata="data/processed/mouse_abc/scrna_cell_metadata.parquet"
     shell:
         "python -m hypomap.preprocessing.extract_scrna_expression"
@@ -333,12 +333,12 @@ rule ligand_receptor_map:
 rule scrna_expression:
     """Download 10Xv3 scRNA-seq expression for hypothalamus."""
     input:
-        "data/processed/mouse_abc/scrna_expression_log2cpm.parquet"
+        "data/processed/mouse_abc/scrna_expression_cpm.h5ad"
 
 rule run_cnmf_prepare:
-    """Prepare cNMF: convert expression to h5ad + run cNMF prepare."""
+    """Prepare cNMF: run cNMF prepare on expression h5ad."""
     input:
-        "data/processed/mouse_abc/scrna_expression_log2cpm.parquet"
+        "data/processed/mouse_abc/scrna_expression_cpm.h5ad"
     output:
         directory("data/processed/mouse_abc/cnmf/hypo_cnmf")
     shell:

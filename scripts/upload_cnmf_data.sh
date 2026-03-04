@@ -19,9 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # --- 1. Create GCS bucket if needed ---
-if ! gsutil ls "$GCS_BUCKET" &>/dev/null; then
+if ! gcloud storage ls "$GCS_BUCKET" &>/dev/null; then
     echo "Creating GCS bucket ${GCS_BUCKET}..."
-    gsutil mb -l us-central1 "$GCS_BUCKET"
+    gcloud storage buckets create "$GCS_BUCKET" --location=us-central1
 fi
 
 # --- 2. Upload expression h5ad ---
@@ -34,9 +34,9 @@ if [ ! -f "$H5AD_FILE" ]; then
     exit 1
 fi
 
-if gsutil -q stat "$GCS_H5AD" 2>/dev/null; then
+if gcloud storage stat "$GCS_H5AD" &>/dev/null; then
     LOCAL_SIZE=$(stat -f%z "$H5AD_FILE" 2>/dev/null || stat -c%s "$H5AD_FILE")
-    REMOTE_SIZE=$(gsutil stat "$GCS_H5AD" 2>/dev/null | grep "Content-Length" | awk '{print $2}')
+    REMOTE_SIZE=$(gcloud storage stat "$GCS_H5AD" 2>/dev/null | grep "content_length" | awk '{print $2}')
     if [ "$LOCAL_SIZE" = "$REMOTE_SIZE" ]; then
         echo "Expression h5ad already in GCS (same size), skipping upload."
         exit 0
@@ -47,5 +47,5 @@ fi
 
 echo "Uploading expression h5ad to GCS..."
 echo "  Source: $H5AD_FILE ($(du -h "$H5AD_FILE" | cut -f1))"
-gsutil -q cp "$H5AD_FILE" "$GCS_H5AD"
+gcloud storage cp "$H5AD_FILE" "$GCS_H5AD"
 echo "  Uploaded to $GCS_H5AD"

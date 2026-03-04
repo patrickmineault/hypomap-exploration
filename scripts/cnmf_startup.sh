@@ -17,15 +17,23 @@ GCS_BUCKET="gs://neuroai-abc"
 LOG=/var/log/cnmf.log
 exec > >(tee -a "$LOG") 2>&1
 
-# Upload logs to GCS on any error or exit
+# Upload logs to GCS on any error or exit.
+# Uses gcloud storage (Go binary) instead of gsutil (Python) so it works
+# even when the system is under memory pressure.
 upload_logs() {
     echo ""
     echo "=== Uploading logs (exit code: $?) ==="
     echo "Time: $(date -u)"
-    gsutil -q cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/" 2>/dev/null || true
+    gcloud storage cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/" 2>/dev/null || true
 }
 trap upload_logs EXIT
 set -e
+
+# Heartbeat: upload current log to GCS so we can monitor progress remotely
+heartbeat() {
+    echo "[heartbeat] $1 — $(date -u)"
+    gcloud storage cp "$LOG" "${GCS_BUCKET}/cnmf_output/logs/cnmf.log" 2>/dev/null || true
+}
 
 echo "=== cNMF startup script ==="
 echo "Time: $(date -u)"
@@ -52,6 +60,7 @@ echo ""
 echo "=== Installing system deps ==="
 apt-get update -qq
 apt-get install -y -qq python3-dev build-essential git curl
+heartbeat "System deps installed"
 
 # Install uv
 if ! command -v uv &>/dev/null; then
@@ -67,19 +76,26 @@ echo "=== Cloning repo ==="
 git clone --depth 1 --branch "$GIT_REF" "$REPO_URL" "$WORK_DIR"
 cd "$WORK_DIR"
 echo "  Checked out $(git rev-parse --short HEAD)"
+heartbeat "Repo cloned"
 
 # --- 3. Install Python deps ---
 echo ""
 echo "=== Installing Python environment ==="
 cd "$WORK_DIR"
 uv sync --no-dev 2>&1 | tail -5
+heartbeat "Python deps installed"
 
 # --- 4. Extract expression data from Allen ABC Atlas ---
 echo ""
 echo "=== Extracting scRNA-seq expression (downloads from Allen ABC Atlas) ==="
 echo "Time: $(date -u)"
-uv run python -m hypomap.preprocessing.extract_scrna_expression
+if [ "$TRIAL_RUN" = "true" ]; then
+    uv run python -m hypomap.preprocessing.extract_scrna_expression --max-cells 500
+else
+    uv run python -m hypomap.preprocessing.extract_scrna_expression
+fi
 echo "Time: $(date -u)"
+heartbeat "Expression extraction complete"
 
 # --- 5. Run cNMF pipeline ---
 if [ "$TRIAL_RUN" = "true" ]; then
@@ -87,6 +103,7 @@ if [ "$TRIAL_RUN" = "true" ]; then
     echo "=== cNMF trial run (500 cells, 500 genes, K=10, 5 iter) ==="
     echo "Time: $(date -u)"
     uv run python scripts/run_cnmf.py --trial-run
+    heartbeat "cNMF trial run complete"
 else
     # 5a. Prepare
     echo ""
@@ -96,6 +113,7 @@ else
         --step prepare \
         --k-values $K_VALUES \
         --n-iter $N_ITER
+    heartbeat "cNMF prepare complete"
 
     # 5b. Factorize (parallel workers)
     echo ""
@@ -125,18 +143,19 @@ else
 
     if [ "$failed" -gt 0 ]; then
         echo "ERROR: $failed workers failed. Check /var/log/cnmf_worker_*.log"
-        # Upload logs even on failure
-        gsutil -q cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/"
+        gcloud storage cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/"
         exit 1
     fi
 
     echo "  All $N_WORKERS workers completed successfully."
+    heartbeat "cNMF factorize complete"
 
     # 5c. Combine
     echo ""
     echo "=== cNMF combine ==="
     echo "Time: $(date -u)"
     uv run python scripts/run_cnmf.py --step combine
+    heartbeat "cNMF combine complete"
 
     # 5d. Consensus
     echo ""
@@ -145,13 +164,14 @@ else
     uv run python scripts/run_cnmf.py \
         --step consensus \
         --selected-k $SELECTED_K
+    heartbeat "cNMF consensus complete"
 fi
 
 # --- 6. Upload results to GCS ---
 echo ""
 echo "=== Uploading results ==="
 echo "Time: $(date -u)"
-gsutil -q -m cp -r "data/processed/mouse_abc/cnmf/hypo_cnmf/" "${GCS_BUCKET}/cnmf_output/" || true
+gcloud storage cp -r "data/processed/mouse_abc/cnmf/hypo_cnmf/" "${GCS_BUCKET}/cnmf_output/" || true
 echo "  Uploaded to ${GCS_BUCKET}/cnmf_output/"
 
 echo ""
