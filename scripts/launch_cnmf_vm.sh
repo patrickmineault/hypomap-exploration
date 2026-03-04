@@ -10,11 +10,20 @@
 #
 # Usage:
 #   bash scripts/upload_cnmf_data.sh   # upload data first
-#   bash scripts/launch_cnmf_vm.sh     # then launch VM
+#   bash scripts/launch_cnmf_vm.sh     # full run
+#   bash scripts/launch_cnmf_vm.sh --trial-run  # quick test (~5 min)
 #
 # Estimated cost: ~$1.50-3 on Spot (n2-highmem-32, 2-4 hrs)
 
 set -euo pipefail
+
+# --- Parse flags ---
+TRIAL_RUN="false"
+for arg in "$@"; do
+    case "$arg" in
+        --trial-run) TRIAL_RUN="true" ;;
+    esac
+done
 
 # --- Configuration ---
 PROJECT=$(gcloud config get-value project 2>/dev/null)
@@ -24,6 +33,11 @@ MACHINE_TYPE="n2-highmem-32"  # 32 vCPU, 256 GB RAM
 BOOT_DISK_SIZE="100GB"
 GCS_BUCKET="gs://neuroai-abc"
 
+if [ "$TRIAL_RUN" = "true" ]; then
+    MACHINE_TYPE="e2-highmem-4"  # 4 vCPU, 32 GB — plenty for 500 cells
+    INSTANCE_NAME="cnmf-trial"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STARTUP_SCRIPT="${SCRIPT_DIR}/cnmf_startup.sh"
 
@@ -31,6 +45,7 @@ echo "=== cNMF VM Launcher ==="
 echo "Project: $PROJECT"
 echo "Zone: $ZONE"
 echo "Machine: $MACHINE_TYPE"
+[ "$TRIAL_RUN" = "true" ] && echo "Mode: TRIAL RUN"
 echo ""
 
 # --- 1. Verify data is in GCS ---
@@ -54,6 +69,7 @@ gcloud compute instances create "$INSTANCE_NAME" \
     --image-family=debian-12 \
     --image-project=debian-cloud \
     --scopes=storage-full,compute-rw \
+    --metadata=TRIAL_RUN="$TRIAL_RUN" \
     --metadata-from-file=startup-script="$STARTUP_SCRIPT"
 
 echo ""

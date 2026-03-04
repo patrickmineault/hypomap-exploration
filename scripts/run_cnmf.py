@@ -10,6 +10,9 @@ Steps:
   consensus  - Extract consensus spectra for a chosen K
 
 Usage:
+    # Quick trial run (500 cells, 5 iterations, K=10) to test the pipeline:
+    python scripts/run_cnmf.py --trial-run
+
     # Run all steps locally (small test):
     python scripts/run_cnmf.py --step all --k-values 50 --n-iter 5
 
@@ -34,7 +37,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent / "data"
 PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc"
 CNMF_DIR = PROCESSED_DIR / "cnmf"
 INPUT_PARQUET = PROCESSED_DIR / "scrna_expression_log2cpm.parquet"
@@ -49,11 +52,21 @@ DEFAULT_N_TOP_GENES = 3000
 DEFAULT_SEED = 42
 
 
-def parquet_to_h5ad(parquet_path: Path, output_path: Path, n_top_genes: int = DEFAULT_N_TOP_GENES):
+def parquet_to_h5ad(
+    parquet_path: Path,
+    output_path: Path,
+    n_top_genes: int = DEFAULT_N_TOP_GENES,
+    max_cells: int | None = None,
+):
     """Convert expression parquet to h5ad, filtering to top high-variance genes."""
     print(f"Loading expression from {parquet_path}...")
     df = pd.read_parquet(parquet_path)
     print(f"  Shape: {df.shape}")
+
+    # Subsample cells if requested (for trial runs)
+    if max_cells is not None and len(df) > max_cells:
+        print(f"  Subsampling to {max_cells} cells (trial run)...")
+        df = df.sample(n=max_cells, random_state=DEFAULT_SEED)
 
     # Filter to top high-variance genes
     print(f"  Selecting top {n_top_genes} high-variance genes...")
@@ -82,7 +95,7 @@ def parquet_to_h5ad(parquet_path: Path, output_path: Path, n_top_genes: int = DE
     return adata
 
 
-def run_prepare(k_values: list[int], n_iter: int, n_top_genes: int, seed: int):
+def run_prepare(k_values: list[int], n_iter: int, n_top_genes: int, seed: int, max_cells: int | None = None):
     """Prepare cNMF: convert data + run cNMF prepare step."""
     from cnmf import cNMF
 
@@ -90,7 +103,7 @@ def run_prepare(k_values: list[int], n_iter: int, n_top_genes: int, seed: int):
 
     # Convert parquet to h5ad if needed
     if not h5ad_path.exists():
-        parquet_to_h5ad(INPUT_PARQUET, h5ad_path, n_top_genes=n_top_genes)
+        parquet_to_h5ad(INPUT_PARQUET, h5ad_path, n_top_genes=n_top_genes, max_cells=max_cells)
     else:
         print(f"Using existing h5ad: {h5ad_path}")
 
@@ -156,9 +169,9 @@ def run_consensus(selected_k: int, density_threshold: float = 0.1):
         print(f"  {f.name} ({size_mb:.1f} MB)")
 
 
-def run_all(k_values: list[int], n_iter: int, n_top_genes: int, seed: int, total_workers: int, selected_k: int):
+def run_all(k_values: list[int], n_iter: int, n_top_genes: int, seed: int, total_workers: int, selected_k: int, max_cells: int | None = None):
     """Run the full cNMF pipeline."""
-    run_prepare(k_values, n_iter, n_top_genes, seed)
+    run_prepare(k_values, n_iter, n_top_genes, seed, max_cells=max_cells)
 
     print(f"\n--- Factorizing with {total_workers} workers ---")
     for i in range(total_workers):
@@ -227,11 +240,29 @@ def main():
         default=0.1,
         help="Density threshold for consensus (default: 0.1)",
     )
+    parser.add_argument(
+        "--trial-run",
+        action="store_true",
+        help="Quick end-to-end test: 500 cells, 500 genes, K=10, 5 iterations, 1 worker",
+    )
 
     args = parser.parse_args()
 
+    # Override params for trial run
+    if args.trial_run:
+        print("=== TRIAL RUN: 500 cells, 500 genes, K=10, 5 iterations ===\n")
+        args.k_values = [10]
+        args.selected_k = 10
+        args.n_iter = 5
+        args.n_top_genes = 500
+        args.total_workers = 1
+        args.step = "all"
+        max_cells = 500
+    else:
+        max_cells = None
+
     if args.step == "prepare":
-        run_prepare(args.k_values, args.n_iter, args.n_top_genes, args.seed)
+        run_prepare(args.k_values, args.n_iter, args.n_top_genes, args.seed, max_cells=max_cells)
     elif args.step == "factorize":
         run_factorize(args.worker_index, args.total_workers)
     elif args.step == "combine":
@@ -246,6 +277,7 @@ def main():
             args.seed,
             args.total_workers,
             args.selected_k,
+            max_cells=max_cells,
         )
 
 

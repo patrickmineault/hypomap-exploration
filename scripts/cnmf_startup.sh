@@ -10,10 +10,20 @@
 #
 # All output is logged to /var/log/cnmf.log (also visible via serial console).
 
-set -euo pipefail
+set -uo pipefail
 
 LOG=/var/log/cnmf.log
 exec > >(tee -a "$LOG") 2>&1
+
+# Upload logs to GCS on any error or exit
+upload_logs() {
+    echo ""
+    echo "=== Uploading logs (exit code: $?) ==="
+    echo "Time: $(date -u)"
+    gsutil -q cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/" 2>/dev/null || true
+}
+trap upload_logs EXIT
+set -e
 
 echo "=== cNMF startup script ==="
 echo "Time: $(date -u)"
@@ -24,10 +34,17 @@ GCS_BUCKET="gs://neuroai-abc"
 REPO_URL="https://github.com/patrickmineault/hypomap-exploration.git"
 GIT_REF="main"  # branch/tag/commit to checkout
 WORK_DIR="/opt/hypomap"
+TRIAL_RUN=$(curl -sf -H "Metadata-Flavor: Google" \
+    http://metadata.google.internal/computeMetadata/v1/instance/attributes/TRIAL_RUN 2>/dev/null || echo "false")
 N_WORKERS=28  # n2-highmem-32 has 32 vCPUs; leave 4 for OS
 K_VALUES="50"
 N_ITER=100
 SELECTED_K=50
+
+if [ "$TRIAL_RUN" = "true" ]; then
+    echo "*** TRIAL RUN MODE ***"
+    N_WORKERS=1
+fi
 
 # --- 1. Install system dependencies ---
 echo ""
@@ -64,80 +81,91 @@ mkdir -p "$PARQUET_DIR"
 gsutil -q cp "${GCS_BUCKET}/cnmf_input/scrna_expression_log2cpm.parquet" "$PARQUET_DIR/"
 echo "  Downloaded $(du -h "$PARQUET_DIR/scrna_expression_log2cpm.parquet" | cut -f1)"
 
-# --- 5. Run cNMF prepare ---
-echo ""
-echo "=== cNMF prepare ==="
-echo "Time: $(date -u)"
-uv run python scripts/run_cnmf.py \
-    --step prepare \
-    --k-values $K_VALUES \
-    --n-iter $N_ITER
-
-# --- 6. Run cNMF factorize (parallel workers) ---
-echo ""
-echo "=== cNMF factorize ($N_WORKERS workers) ==="
-echo "Time: $(date -u)"
-
-pids=()
-for i in $(seq 0 $((N_WORKERS - 1))); do
+# --- 5. Run cNMF pipeline ---
+if [ "$TRIAL_RUN" = "true" ]; then
+    echo ""
+    echo "=== cNMF trial run (500 cells, 500 genes, K=10, 5 iter) ==="
+    echo "Time: $(date -u)"
+    uv run python scripts/run_cnmf.py --trial-run
+else
+    # 5a. Prepare
+    echo ""
+    echo "=== cNMF prepare ==="
+    echo "Time: $(date -u)"
     uv run python scripts/run_cnmf.py \
-        --step factorize \
-        --worker-index "$i" \
-        --total-workers "$N_WORKERS" \
-        > /var/log/cnmf_worker_${i}.log 2>&1 &
-    pids+=($!)
-done
+        --step prepare \
+        --k-values $K_VALUES \
+        --n-iter $N_ITER
 
-echo "  Launched ${#pids[@]} workers: ${pids[*]}"
+    # 5b. Factorize (parallel workers)
+    echo ""
+    echo "=== cNMF factorize ($N_WORKERS workers) ==="
+    echo "Time: $(date -u)"
 
-# Wait for all workers, track failures
-failed=0
-for pid in "${pids[@]}"; do
-    if ! wait "$pid"; then
-        echo "  Worker PID $pid failed!"
-        ((failed++))
+    pids=()
+    for i in $(seq 0 $((N_WORKERS - 1))); do
+        uv run python scripts/run_cnmf.py \
+            --step factorize \
+            --worker-index "$i" \
+            --total-workers "$N_WORKERS" \
+            > /var/log/cnmf_worker_${i}.log 2>&1 &
+        pids+=($!)
+    done
+
+    echo "  Launched ${#pids[@]} workers: ${pids[*]}"
+
+    # Wait for all workers, track failures
+    failed=0
+    for pid in "${pids[@]}"; do
+        if ! wait "$pid"; then
+            echo "  Worker PID $pid failed!"
+            ((failed++))
+        fi
+    done
+
+    if [ "$failed" -gt 0 ]; then
+        echo "ERROR: $failed workers failed. Check /var/log/cnmf_worker_*.log"
+        # Upload logs even on failure
+        gsutil -q cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/"
+        exit 1
     fi
-done
 
-if [ "$failed" -gt 0 ]; then
-    echo "ERROR: $failed workers failed. Check /var/log/cnmf_worker_*.log"
-    # Upload logs even on failure
-    gsutil -q cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/"
-    exit 1
+    echo "  All $N_WORKERS workers completed successfully."
+
+    # 5c. Combine
+    echo ""
+    echo "=== cNMF combine ==="
+    echo "Time: $(date -u)"
+    uv run python scripts/run_cnmf.py --step combine
+
+    # 5d. Consensus
+    echo ""
+    echo "=== cNMF consensus (K=$SELECTED_K) ==="
+    echo "Time: $(date -u)"
+    uv run python scripts/run_cnmf.py \
+        --step consensus \
+        --selected-k $SELECTED_K
 fi
 
-echo "  All $N_WORKERS workers completed successfully."
-
-# --- 7. Run cNMF combine ---
-echo ""
-echo "=== cNMF combine ==="
-echo "Time: $(date -u)"
-uv run python scripts/run_cnmf.py --step combine
-
-# --- 8. Run cNMF consensus ---
-echo ""
-echo "=== cNMF consensus (K=$SELECTED_K) ==="
-echo "Time: $(date -u)"
-uv run python scripts/run_cnmf.py \
-    --step consensus \
-    --selected-k $SELECTED_K
-
-# --- 9. Upload results to GCS ---
+# --- 6. Upload results to GCS ---
 echo ""
 echo "=== Uploading results ==="
 echo "Time: $(date -u)"
-gsutil -q -m cp -r "data/processed/mouse_abc/cnmf/hypo_cnmf/" "${GCS_BUCKET}/cnmf_output/"
-gsutil -q cp /var/log/cnmf*.log "${GCS_BUCKET}/cnmf_output/logs/"
+gsutil -q -m cp -r "data/processed/mouse_abc/cnmf/hypo_cnmf/" "${GCS_BUCKET}/cnmf_output/" || true
 echo "  Uploaded to ${GCS_BUCKET}/cnmf_output/"
 
 echo ""
 echo "=== cNMF pipeline complete ==="
 echo "Time: $(date -u)"
 
-# --- 10. Self-delete the VM ---
-echo "Self-deleting VM in 60 seconds..."
-sleep 60
-
-ZONE=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | awk -F/ '{print $NF}')
-INSTANCE=$(hostname)
-gcloud compute instances delete "$INSTANCE" --zone="$ZONE" --quiet
+# --- 7. Self-delete the VM (skip for trial runs so you can SSH in) ---
+if [ "$TRIAL_RUN" = "true" ]; then
+    echo "Trial run complete. VM left running for inspection."
+    echo "Delete manually: gcloud compute instances delete $(hostname) --zone=\$(curl -sf -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/zone | awk -F/ '{print \$NF}') --quiet"
+else
+    echo "Self-deleting VM in 60 seconds..."
+    sleep 60
+    ZONE=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | awk -F/ '{print $NF}')
+    INSTANCE=$(hostname)
+    gcloud compute instances delete "$INSTANCE" --zone="$ZONE" --quiet
+fi
