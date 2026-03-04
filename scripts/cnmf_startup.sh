@@ -13,6 +13,7 @@
 set -uo pipefail
 export HOME="${HOME:-/root}"
 
+GCS_BUCKET="gs://neuroai-abc"
 LOG=/var/log/cnmf.log
 exec > >(tee -a "$LOG") 2>&1
 
@@ -31,7 +32,6 @@ echo "Time: $(date -u)"
 echo "Instance: $(hostname)"
 
 # --- Configuration ---
-GCS_BUCKET="gs://neuroai-abc"
 REPO_URL="https://github.com/patrickmineault/hypomap-exploration.git"
 GIT_REF="main"  # branch/tag/commit to checkout
 WORK_DIR="/opt/hypomap"
