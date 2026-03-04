@@ -15,7 +15,12 @@ export HOME="${HOME:-/root}"
 
 GCS_BUCKET="gs://neuroai-abc"
 LOG=/var/log/cnmf.log
-exec > >(tee -a "$LOG") 2>&1
+
+# Redirect all output to the log file. On GCE the serial console captures
+# the startup-script runner's stdout/stderr separately, so we don't need
+# tee. Using tee via process substitution causes SIGPIPE when progress-bar
+# output (from ABC Atlas downloads) overwhelms the pipe buffer.
+exec >> "$LOG" 2>&1
 
 # Upload logs to GCS on any error or exit.
 # Uses gcloud storage (Go binary) instead of gsutil (Python) so it works
