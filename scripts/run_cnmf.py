@@ -1,16 +1,16 @@
 """Run cNMF (consensus Non-negative Matrix Factorization) on hypothalamus scRNA-seq.
 
 Wraps the cNMF pipeline (prepare → factorize → combine → consensus) with argparse.
-Input is the log2(CPM+1) expression parquet from extract_scrna_expression.py.
+Input is the CPM expression h5ad from extract_scrna_expression.py.
 
 Steps:
-  prepare    - Convert parquet → h5ad, filter to high-variance genes, run cNMF prepare
+  prepare    - Run cNMF prepare on the h5ad
   factorize  - Run NMF factorization (parallelizable across workers)
   combine    - Combine factorization results
   consensus  - Extract consensus spectra for a chosen K
 
 Usage:
-    # Quick trial run (500 cells, 5 iterations, K=10) to test the pipeline:
+    # Quick trial run (500 cells, K=10, 5 iterations) to test the pipeline:
     python scripts/run_cnmf.py --trial-run
 
     # Run all steps locally (small test):
@@ -28,19 +28,12 @@ Usage:
 """
 
 import argparse
-import subprocess
-import sys
 from pathlib import Path
-
-import anndata
-import numpy as np
-import pandas as pd
-import scipy.sparse as sp
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc"
 CNMF_DIR = PROCESSED_DIR / "cnmf"
-INPUT_PARQUET = PROCESSED_DIR / "scrna_expression_log2cpm.parquet"
+INPUT_H5AD = PROCESSED_DIR / "scrna_expression_cpm.h5ad"
 
 # cNMF run name (used as prefix for all output files)
 CNMF_NAME = "hypo_cnmf"
@@ -52,63 +45,33 @@ DEFAULT_N_TOP_GENES = 3000
 DEFAULT_SEED = 42
 
 
-def parquet_to_h5ad(
-    parquet_path: Path,
-    output_path: Path,
-    n_top_genes: int = DEFAULT_N_TOP_GENES,
-    max_cells: int | None = None,
-):
-    """Convert expression parquet to h5ad, filtering to top high-variance genes."""
-    print(f"Loading expression from {parquet_path}...")
-    df = pd.read_parquet(parquet_path)
-    print(f"  Shape: {df.shape}")
+def subsample_h5ad(input_path: Path, output_path: Path, max_cells: int):
+    """Create a subsampled h5ad for trial runs."""
+    import anndata
+    import numpy as np
 
-    # Subsample cells if requested (for trial runs)
-    if max_cells is not None and len(df) > max_cells:
-        print(f"  Subsampling to {max_cells} cells (trial run)...")
-        df = df.sample(n=max_cells, random_state=DEFAULT_SEED)
+    print(f"Subsampling {input_path} to {max_cells} cells...")
+    adata = anndata.read_h5ad(input_path, backed="r")
+    n_total = adata.n_obs
+    print(f"  Total cells: {n_total}")
 
-    # Filter to top high-variance genes
-    print(f"  Selecting top {n_top_genes} high-variance genes...")
-    gene_var = df.var(axis=0)
-    top_genes = gene_var.nlargest(n_top_genes).index
-    df = df[top_genes]
-    print(f"  Filtered shape: {df.shape}")
-
-    # Convert to AnnData (cNMF expects counts-like data, not log-transformed)
-    # Reverse log2(CPM+1) → CPM
-    print("  Reversing log2(CPM+1) → CPM...")
-    cpm_matrix = np.power(2, df.values) - 1
-
-    adata = anndata.AnnData(
-        X=sp.csr_matrix(cpm_matrix),
-        obs=pd.DataFrame(index=df.index),
-        var=pd.DataFrame(index=df.columns),
-    )
-    adata.obs.index.name = "cell_label"
-    adata.var.index.name = "gene_symbol"
+    rng = np.random.default_rng(DEFAULT_SEED)
+    idx = np.sort(rng.choice(n_total, size=min(max_cells, n_total), replace=False))
+    adata_sub = adata[idx].to_memory()
+    adata.file.close()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  Saving h5ad to {output_path}...")
-    adata.write_h5ad(output_path)
-    print(f"  Done. Shape: {adata.shape}")
-    return adata
+    adata_sub.write_h5ad(output_path)
+    print(f"  Saved {adata_sub.n_obs} cells to {output_path}")
+    return output_path
 
 
-def run_prepare(k_values: list[int], n_iter: int, n_top_genes: int, seed: int, max_cells: int | None = None):
-    """Prepare cNMF: convert data + run cNMF prepare step."""
+def run_prepare(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: int, seed: int):
+    """Run cNMF prepare step."""
     from cnmf import cNMF
 
-    h5ad_path = CNMF_DIR / "expression_for_cnmf.h5ad"
-
-    # Convert parquet to h5ad if needed
-    if not h5ad_path.exists():
-        parquet_to_h5ad(INPUT_PARQUET, h5ad_path, n_top_genes=n_top_genes, max_cells=max_cells)
-    else:
-        print(f"Using existing h5ad: {h5ad_path}")
-
-    # Run cNMF prepare
     print(f"\nRunning cNMF prepare (K={k_values}, n_iter={n_iter})...")
+    print(f"  Input: {h5ad_path}")
     cnmf_obj = cNMF(
         output_dir=str(CNMF_DIR),
         name=CNMF_NAME,
@@ -169,9 +132,9 @@ def run_consensus(selected_k: int, density_threshold: float = 0.1):
         print(f"  {f.name} ({size_mb:.1f} MB)")
 
 
-def run_all(k_values: list[int], n_iter: int, n_top_genes: int, seed: int, total_workers: int, selected_k: int, max_cells: int | None = None):
+def run_all(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: int, seed: int, total_workers: int, selected_k: int):
     """Run the full cNMF pipeline."""
-    run_prepare(k_values, n_iter, n_top_genes, seed, max_cells=max_cells)
+    run_prepare(h5ad_path, k_values, n_iter, n_top_genes, seed)
 
     print(f"\n--- Factorizing with {total_workers} workers ---")
     for i in range(total_workers):
@@ -243,26 +206,29 @@ def main():
     parser.add_argument(
         "--trial-run",
         action="store_true",
-        help="Quick end-to-end test: 500 cells, 500 genes, K=10, 5 iterations, 1 worker",
+        help="Quick end-to-end test: 500 cells, K=10, 5 iterations, 1 worker",
     )
 
     args = parser.parse_args()
 
     # Override params for trial run
     if args.trial_run:
-        print("=== TRIAL RUN: 500 cells, 500 genes, K=10, 5 iterations ===\n")
+        print("=== TRIAL RUN: 500 cells, K=10, 5 iterations ===\n")
         args.k_values = [10]
         args.selected_k = 10
         args.n_iter = 5
         args.n_top_genes = 500
         args.total_workers = 1
         args.step = "all"
-        max_cells = 500
-    else:
-        max_cells = None
+
+    # Determine input h5ad
+    h5ad_path = INPUT_H5AD
+    if args.trial_run:
+        trial_h5ad = CNMF_DIR / "expression_trial.h5ad"
+        h5ad_path = subsample_h5ad(INPUT_H5AD, trial_h5ad, max_cells=500)
 
     if args.step == "prepare":
-        run_prepare(args.k_values, args.n_iter, args.n_top_genes, args.seed, max_cells=max_cells)
+        run_prepare(h5ad_path, args.k_values, args.n_iter, args.n_top_genes, args.seed)
     elif args.step == "factorize":
         run_factorize(args.worker_index, args.total_workers)
     elif args.step == "combine":
@@ -271,13 +237,13 @@ def main():
         run_consensus(args.selected_k, args.density_threshold)
     elif args.step == "all":
         run_all(
+            h5ad_path,
             args.k_values,
             args.n_iter,
             args.n_top_genes,
             args.seed,
             args.total_workers,
             args.selected_k,
-            max_cells=max_cells,
         )
 
 

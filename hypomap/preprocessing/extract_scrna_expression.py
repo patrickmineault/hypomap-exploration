@@ -5,8 +5,8 @@ which contains log2(CPM+1) values for all QC-passing cells. Also saves a metadat
 sidecar with cell annotations (cluster, class, subclass, supertype).
 
 Output:
-    data/processed/mouse_abc/scrna_expression_log2cpm.parquet  (~100-300k cells x ~30k genes)
-    data/processed/mouse_abc/scrna_cell_metadata.parquet       (cell annotations)
+    data/processed/mouse_abc/scrna_expression_cpm.h5ad     (~100-300k cells x ~30k genes, CPM values)
+    data/processed/mouse_abc/scrna_cell_metadata.parquet    (cell annotations)
 
 Usage:
     python -m hypomap.preprocessing.extract_scrna_expression
@@ -186,12 +186,25 @@ def main():
     print(f"  Value range: [{expr_df.values.min():.2f}, {expr_df.values.max():.2f}]")
     print(f"  Memory usage: {expr_df.memory_usage(deep=True).sum() / 1e9:.1f} GB")
 
-    # 10. Save expression parquet
+    # 10. Save expression as h5ad with CPM values
+    # The source data is log2(CPM+1); reverse to CPM for downstream tools (e.g. cNMF)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    expr_path = OUTPUT_DIR / "scrna_expression_log2cpm.parquet"
-    print(f"\nSaving expression to {expr_path}...")
-    expr_df.to_parquet(expr_path)
-    print(f"  File size: {expr_path.stat().st_size / 1e9:.2f} GB")
+    print("\nConverting log2(CPM+1) → CPM (float32)...")
+    cpm_matrix = (np.power(2, expr_df.values) - 1).astype(np.float32)
+
+    adata_out = anndata.AnnData(
+        X=cpm_matrix,
+        obs=pd.DataFrame(index=expr_df.index),
+        var=pd.DataFrame(index=expr_df.columns),
+    )
+    adata_out.obs.index.name = "cell_label"
+    adata_out.var.index.name = "gene_symbol"
+
+    h5ad_path = OUTPUT_DIR / "scrna_expression_cpm.h5ad"
+    print(f"Saving h5ad to {h5ad_path}...")
+    adata_out.write_h5ad(h5ad_path, compression="gzip")
+    print(f"  File size: {h5ad_path.stat().st_size / 1e9:.2f} GB")
+    del cpm_matrix, adata_out
 
     # 11. Save cell metadata sidecar
     available_cols = [c for c in METADATA_COLS if c in hy_cells.columns or c == "cell_label"]
@@ -209,7 +222,7 @@ def main():
     # Summary
     print(f"\n=== Done ===")
     print(f"  Expression: {expr_df.shape[0]} cells x {expr_df.shape[1]} genes")
-    print(f"  Output: {expr_path}")
+    print(f"  Output: {h5ad_path}")
     print(f"  Metadata: {meta_path}")
 
 

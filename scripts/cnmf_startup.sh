@@ -74,13 +74,12 @@ echo "=== Installing Python environment ==="
 cd "$WORK_DIR"
 uv sync --no-dev 2>&1 | tail -5
 
-# --- 4. Download expression data from GCS ---
+# --- 4. Extract expression data from Allen ABC Atlas ---
 echo ""
-echo "=== Downloading expression data ==="
-PARQUET_DIR="data/processed/mouse_abc"
-mkdir -p "$PARQUET_DIR"
-gsutil -q cp "${GCS_BUCKET}/cnmf_input/scrna_expression_log2cpm.parquet" "$PARQUET_DIR/"
-echo "  Downloaded $(du -h "$PARQUET_DIR/scrna_expression_log2cpm.parquet" | cut -f1)"
+echo "=== Extracting scRNA-seq expression (downloads from Allen ABC Atlas) ==="
+echo "Time: $(date -u)"
+uv run python -m hypomap.preprocessing.extract_scrna_expression
+echo "Time: $(date -u)"
 
 # --- 5. Run cNMF pipeline ---
 if [ "$TRIAL_RUN" = "true" ]; then

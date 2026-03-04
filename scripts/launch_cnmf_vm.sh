@@ -1,7 +1,8 @@
 #!/bin/bash
 # Launch a GCP Spot VM to run cNMF on hypothalamus scRNA-seq.
 #
-# Run upload_cnmf_data.sh first to upload the expression parquet to GCS.
+# The VM downloads expression data directly from Allen ABC Atlas,
+# runs cNMF, and uploads results to GCS.
 #
 # Prerequisites (one-time):
 #   gcloud auth login
@@ -9,9 +10,8 @@
 #   gcloud services enable compute.googleapis.com
 #
 # Usage:
-#   bash scripts/upload_cnmf_data.sh   # upload data first
-#   bash scripts/launch_cnmf_vm.sh     # full run
-#   bash scripts/launch_cnmf_vm.sh --trial-run  # quick test (~5 min)
+#   bash scripts/launch_cnmf_vm.sh              # full run
+#   bash scripts/launch_cnmf_vm.sh --trial-run  # quick test (~10 min)
 #
 # Estimated cost: ~$1.50-3 on Spot (n2-highmem-32, 2-4 hrs)
 
@@ -19,15 +19,17 @@ set -euo pipefail
 
 # --- Parse flags ---
 TRIAL_RUN="false"
-for arg in "$@"; do
-    case "$arg" in
-        --trial-run) TRIAL_RUN="true" ;;
+ZONE="us-central1-a"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --trial-run) TRIAL_RUN="true"; shift ;;
+        --zone) ZONE="$2"; shift 2 ;;
+        *) echo "Unknown flag: $1"; exit 1 ;;
     esac
 done
 
 # --- Configuration ---
 PROJECT=$(gcloud config get-value project 2>/dev/null)
-ZONE="us-central1-a"
 INSTANCE_NAME="cnmf-runner"
 MACHINE_TYPE="n2-highmem-32"  # 32 vCPU, 256 GB RAM
 BOOT_DISK_SIZE="100GB"
@@ -48,14 +50,11 @@ echo "Machine: $MACHINE_TYPE"
 [ "$TRIAL_RUN" = "true" ] && echo "Mode: TRIAL RUN"
 echo ""
 
-# --- 1. Verify data is in GCS ---
-GCS_PARQUET="${GCS_BUCKET}/cnmf_input/scrna_expression_log2cpm.parquet"
-if ! gsutil -q stat "$GCS_PARQUET" 2>/dev/null; then
-    echo "ERROR: Expression parquet not found in GCS."
-    echo "Run first: bash scripts/upload_cnmf_data.sh"
-    exit 1
+# --- 1. Create GCS bucket if needed ---
+if ! gsutil ls "$GCS_BUCKET" &>/dev/null; then
+    echo "Creating GCS bucket ${GCS_BUCKET}..."
+    gsutil mb -l us-central1 "$GCS_BUCKET"
 fi
-echo "Expression parquet found in GCS."
 
 # --- 2. Create Spot VM ---
 echo ""
