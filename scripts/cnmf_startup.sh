@@ -50,14 +50,22 @@ GIT_REF="main"  # branch/tag/commit to checkout
 WORK_DIR="/opt/hypomap"
 TRIAL_RUN=$(curl -sf -H "Metadata-Flavor: Google" \
     http://metadata.google.internal/computeMetadata/v1/instance/attributes/TRIAL_RUN 2>/dev/null || echo "false")
+NEURONS_ONLY=$(curl -sf -H "Metadata-Flavor: Google" \
+    http://metadata.google.internal/computeMetadata/v1/instance/attributes/NEURONS_ONLY 2>/dev/null || echo "false")
 N_WORKERS=28  # n2-highmem-32 has 32 vCPUs; leave 4 for OS
 K_VALUES="50"
 N_ITER=100
 SELECTED_K=50
+CNMF_RUN_NAME="hypo_cnmf"
 
 if [ "$TRIAL_RUN" = "true" ]; then
     echo "*** TRIAL RUN MODE ***"
     N_WORKERS=1
+fi
+
+if [ "$NEURONS_ONLY" = "true" ]; then
+    echo "*** NEURONS ONLY MODE ***"
+    CNMF_RUN_NAME="hypo_cnmf_neurons"
 fi
 
 # --- 1. Install system dependencies ---
@@ -94,11 +102,14 @@ heartbeat "Python deps installed"
 echo ""
 echo "=== Extracting scRNA-seq expression (downloads from Allen ABC Atlas) ==="
 echo "Time: $(date -u)"
+EXTRACT_FLAGS=""
 if [ "$TRIAL_RUN" = "true" ]; then
-    uv run python -m hypomap.preprocessing.extract_scrna_expression --max-cells 500
-else
-    uv run python -m hypomap.preprocessing.extract_scrna_expression
+    EXTRACT_FLAGS="--max-cells 500"
 fi
+if [ "$NEURONS_ONLY" = "true" ]; then
+    EXTRACT_FLAGS="$EXTRACT_FLAGS --neurons-only"
+fi
+uv run python -m hypomap.preprocessing.extract_scrna_expression $EXTRACT_FLAGS
 echo "Time: $(date -u)"
 heartbeat "Expression extraction complete"
 
@@ -107,7 +118,7 @@ if [ "$TRIAL_RUN" = "true" ]; then
     echo ""
     echo "=== cNMF trial run (500 cells, 500 genes, K=10, 5 iter) ==="
     echo "Time: $(date -u)"
-    uv run python scripts/run_cnmf.py --trial-run
+    uv run python scripts/run_cnmf.py --trial-run --run-name "$CNMF_RUN_NAME"
     heartbeat "cNMF trial run complete"
 else
     # 5a. Prepare
@@ -117,7 +128,8 @@ else
     uv run python scripts/run_cnmf.py \
         --step prepare \
         --k-values $K_VALUES \
-        --n-iter $N_ITER
+        --n-iter $N_ITER \
+        --run-name "$CNMF_RUN_NAME"
     heartbeat "cNMF prepare complete"
 
     # 5b. Factorize (parallel workers)
@@ -131,6 +143,7 @@ else
             --step factorize \
             --worker-index "$i" \
             --total-workers "$N_WORKERS" \
+            --run-name "$CNMF_RUN_NAME" \
             > /var/log/cnmf_worker_${i}.log 2>&1 &
         pids+=($!)
     done
@@ -159,7 +172,7 @@ else
     echo ""
     echo "=== cNMF combine ==="
     echo "Time: $(date -u)"
-    uv run python scripts/run_cnmf.py --step combine
+    uv run python scripts/run_cnmf.py --step combine --run-name "$CNMF_RUN_NAME"
     heartbeat "cNMF combine complete"
 
     # 5d. Consensus
@@ -168,7 +181,8 @@ else
     echo "Time: $(date -u)"
     uv run python scripts/run_cnmf.py \
         --step consensus \
-        --selected-k $SELECTED_K
+        --selected-k $SELECTED_K \
+        --run-name "$CNMF_RUN_NAME"
     heartbeat "cNMF consensus complete"
 fi
 
@@ -176,8 +190,8 @@ fi
 echo ""
 echo "=== Uploading results ==="
 echo "Time: $(date -u)"
-gcloud storage cp -r "data/processed/mouse_abc/cnmf/hypo_cnmf/" "${GCS_BUCKET}/cnmf_output/" || true
-echo "  Uploaded to ${GCS_BUCKET}/cnmf_output/"
+gcloud storage cp -r "data/processed/mouse_abc/cnmf/${CNMF_RUN_NAME}/" "${GCS_BUCKET}/cnmf_output/" || true
+echo "  Uploaded to ${GCS_BUCKET}/cnmf_output/${CNMF_RUN_NAME}/"
 
 echo ""
 echo "=== cNMF pipeline complete ==="

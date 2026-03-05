@@ -35,8 +35,8 @@ PROCESSED_DIR = DATA_DIR / "processed" / "mouse_abc"
 CNMF_DIR = PROCESSED_DIR / "cnmf"
 INPUT_H5AD = PROCESSED_DIR / "scrna_expression_cpm.h5ad"
 
-# cNMF run name (used as prefix for all output files)
-CNMF_NAME = "hypo_cnmf"
+# Default cNMF run name (used as prefix for all output files)
+DEFAULT_CNMF_NAME = "hypo_cnmf"
 
 # Default parameters
 DEFAULT_K_VALUES = [50]
@@ -66,7 +66,7 @@ def subsample_h5ad(input_path: Path, output_path: Path, max_cells: int):
     return output_path
 
 
-def run_prepare(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: int, seed: int):
+def run_prepare(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: int, seed: int, cnmf_name: str = DEFAULT_CNMF_NAME):
     """Run cNMF prepare step."""
     from cnmf import cNMF
 
@@ -74,7 +74,7 @@ def run_prepare(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: 
     print(f"  Input: {h5ad_path}")
     cnmf_obj = cNMF(
         output_dir=str(CNMF_DIR),
-        name=CNMF_NAME,
+        name=cnmf_name,
     )
     cnmf_obj.prepare(
         counts_fn=str(h5ad_path),
@@ -86,62 +86,62 @@ def run_prepare(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: 
     print("  Prepare complete.")
 
 
-def run_factorize(worker_index: int, total_workers: int):
+def run_factorize(worker_index: int, total_workers: int, cnmf_name: str = DEFAULT_CNMF_NAME):
     """Run cNMF factorize step (one worker)."""
     from cnmf import cNMF
 
     print(f"Running cNMF factorize (worker {worker_index}/{total_workers})...")
     cnmf_obj = cNMF(
         output_dir=str(CNMF_DIR),
-        name=CNMF_NAME,
+        name=cnmf_name,
     )
     cnmf_obj.factorize(worker_i=worker_index, total_workers=total_workers)
     print(f"  Worker {worker_index} complete.")
 
 
-def run_combine():
+def run_combine(cnmf_name: str = DEFAULT_CNMF_NAME):
     """Combine factorization results."""
     from cnmf import cNMF
 
     print("Running cNMF combine...")
     cnmf_obj = cNMF(
         output_dir=str(CNMF_DIR),
-        name=CNMF_NAME,
+        name=cnmf_name,
     )
     cnmf_obj.combine()
     print("  Combine complete.")
 
 
-def run_consensus(selected_k: int, density_threshold: float = 0.1):
+def run_consensus(selected_k: int, density_threshold: float = 0.1, cnmf_name: str = DEFAULT_CNMF_NAME):
     """Extract consensus spectra for a chosen K."""
     from cnmf import cNMF
 
     print(f"Running cNMF consensus (K={selected_k}, density_threshold={density_threshold})...")
     cnmf_obj = cNMF(
         output_dir=str(CNMF_DIR),
-        name=CNMF_NAME,
+        name=cnmf_name,
     )
     cnmf_obj.consensus(k=selected_k, density_threshold=density_threshold)
     print("  Consensus complete.")
 
     # Check outputs
-    result_dir = CNMF_DIR / CNMF_NAME
+    result_dir = CNMF_DIR / cnmf_name
     print(f"\nResults in {result_dir}:")
     for f in sorted(result_dir.iterdir()):
         size_mb = f.stat().st_size / 1e6
         print(f"  {f.name} ({size_mb:.1f} MB)")
 
 
-def run_all(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: int, seed: int, total_workers: int, selected_k: int):
+def run_all(h5ad_path: Path, k_values: list[int], n_iter: int, n_top_genes: int, seed: int, total_workers: int, selected_k: int, cnmf_name: str = DEFAULT_CNMF_NAME):
     """Run the full cNMF pipeline."""
-    run_prepare(h5ad_path, k_values, n_iter, n_top_genes, seed)
+    run_prepare(h5ad_path, k_values, n_iter, n_top_genes, seed, cnmf_name)
 
     print(f"\n--- Factorizing with {total_workers} workers ---")
     for i in range(total_workers):
-        run_factorize(worker_index=i, total_workers=total_workers)
+        run_factorize(worker_index=i, total_workers=total_workers, cnmf_name=cnmf_name)
 
-    run_combine()
-    run_consensus(selected_k)
+    run_combine(cnmf_name)
+    run_consensus(selected_k, cnmf_name=cnmf_name)
 
 
 def main():
@@ -208,6 +208,12 @@ def main():
         action="store_true",
         help="Quick end-to-end test: 500 cells, K=10, 5 iterations, 1 worker",
     )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=DEFAULT_CNMF_NAME,
+        help=f"cNMF run name (default: {DEFAULT_CNMF_NAME})",
+    )
 
     args = parser.parse_args()
 
@@ -227,14 +233,17 @@ def main():
         trial_h5ad = CNMF_DIR / "expression_trial.h5ad"
         h5ad_path = subsample_h5ad(INPUT_H5AD, trial_h5ad, max_cells=500)
 
+    cnmf_name = args.run_name
+    print(f"cNMF run name: {cnmf_name}")
+
     if args.step == "prepare":
-        run_prepare(h5ad_path, args.k_values, args.n_iter, args.n_top_genes, args.seed)
+        run_prepare(h5ad_path, args.k_values, args.n_iter, args.n_top_genes, args.seed, cnmf_name)
     elif args.step == "factorize":
-        run_factorize(args.worker_index, args.total_workers)
+        run_factorize(args.worker_index, args.total_workers, cnmf_name)
     elif args.step == "combine":
-        run_combine()
+        run_combine(cnmf_name)
     elif args.step == "consensus":
-        run_consensus(args.selected_k, args.density_threshold)
+        run_consensus(args.selected_k, args.density_threshold, cnmf_name)
     elif args.step == "all":
         run_all(
             h5ad_path,
@@ -244,6 +253,7 @@ def main():
             args.seed,
             args.total_workers,
             args.selected_k,
+            cnmf_name,
         )
 
 

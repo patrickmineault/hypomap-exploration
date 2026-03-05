@@ -61,7 +61,52 @@ def parse_args():
         default=None,
         help="Limit extraction to N cells (for trial runs on small VMs)",
     )
+    parser.add_argument(
+        "--neurons-only",
+        action="store_true",
+        help="Filter to neuronal cells only (class number < 30 in ABC taxonomy)",
+    )
     return parser.parse_args()
+
+
+def join_taxonomy(cell_meta: pd.DataFrame, cache) -> pd.DataFrame:
+    """Join ABC taxonomy annotations (class/subclass/supertype/cluster) via cluster_alias.
+
+    The 10X cell metadata has cluster_alias but not the full taxonomy hierarchy.
+    We pivot the cluster_to_cluster_annotation_membership table to get them.
+    """
+    print("  Joining taxonomy annotations via cluster_alias...")
+    membership = cache.get_metadata_dataframe(
+        directory="WMB-taxonomy",
+        file_name="cluster_to_cluster_annotation_membership",
+    )
+    # Pivot: rows = cluster_annotation_term_pt_name (cluster alias),
+    # columns = cluster_annotation_term_set_name (class/subclass/etc),
+    # values = cluster_annotation_term_name (the label)
+    pivot = membership.pivot_table(
+        index="cluster_alias",
+        columns="cluster_annotation_term_set_name",
+        values="cluster_annotation_term_name",
+        aggfunc="first",
+    )
+    # Rename columns to match our METADATA_COLS
+    col_map = {}
+    for col in pivot.columns:
+        col_lower = col.lower()
+        if col_lower in ("class", "subclass", "supertype", "cluster", "neurotransmitter"):
+            col_map[col] = col_lower
+    pivot = pivot.rename(columns=col_map)
+
+    # Join onto cell metadata
+    cell_meta = cell_meta.join(pivot, on="cluster_alias", rsuffix="_tax")
+    # Drop any duplicate columns from the join
+    drop_cols = [c for c in cell_meta.columns if c.endswith("_tax")]
+    if drop_cols:
+        cell_meta = cell_meta.drop(columns=drop_cols)
+
+    available = [c for c in ["class", "subclass", "supertype", "cluster"] if c in cell_meta.columns]
+    print(f"  Added taxonomy columns: {available}")
+    return cell_meta
 
 
 def main():
@@ -95,6 +140,21 @@ def main():
             f"No cells found with feature_matrix_label == '{HY_LABEL}'. "
             f"Available labels: {cell_meta['feature_matrix_label'].unique().tolist()[:10]}"
         )
+
+    # 3b. Join taxonomy annotations (class/subclass/supertype/cluster)
+    if "class" not in hy_cells.columns:
+        hy_cells = join_taxonomy(hy_cells, cache)
+
+    # 3c. Filter to neurons only if requested
+    if args.neurons_only:
+        if "class" not in hy_cells.columns:
+            raise ValueError("Cannot filter neurons: 'class' column not found after taxonomy join")
+        # Classes with leading number >= 30 are non-neuronal
+        class_num = hy_cells["class"].str.extract(r"^(\d+)", expand=False).astype(float)
+        neuron_mask = class_num < 30
+        n_before = len(hy_cells)
+        hy_cells = hy_cells[neuron_mask]
+        print(f"  Neurons-only filter: {n_before} → {len(hy_cells)} cells ({len(hy_cells)/n_before:.0%})")
 
     # 4. Load gene metadata
     print(f"Loading gene metadata from {GENE_METADATA_DIR}/{GENE_METADATA_FILE}...")
