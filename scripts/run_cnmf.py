@@ -214,6 +214,12 @@ def main():
         default=DEFAULT_CNMF_NAME,
         help=f"cNMF run name (default: {DEFAULT_CNMF_NAME})",
     )
+    parser.add_argument(
+        "--input-h5ad",
+        type=str,
+        default=None,
+        help=f"Custom input h5ad path (default: {INPUT_H5AD})",
+    )
 
     args = parser.parse_args()
 
@@ -228,12 +234,23 @@ def main():
         args.step = "all"
 
     # Determine input h5ad
-    h5ad_path = INPUT_H5AD
+    h5ad_path = Path(args.input_h5ad) if args.input_h5ad else INPUT_H5AD
     if args.trial_run:
         trial_h5ad = CNMF_DIR / "expression_trial.h5ad"
         h5ad_path = subsample_h5ad(INPUT_H5AD, trial_h5ad, max_cells=500)
 
     cnmf_name = args.run_name
+
+    # Auto-adjust n_top_genes if input has fewer genes than requested
+    if args.step in ("prepare", "all") and not args.trial_run:
+        import anndata as _ad
+        _adata = _ad.read_h5ad(h5ad_path, backed="r")
+        n_genes = _adata.n_vars
+        _adata.file.close()
+        if n_genes < args.n_top_genes:
+            print(f"  Input has {n_genes} genes, adjusting n_top_genes from {args.n_top_genes} to {n_genes}")
+            args.n_top_genes = n_genes
+
     print(f"cNMF run name: {cnmf_name}")
 
     if args.step == "prepare":
