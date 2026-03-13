@@ -52,9 +52,8 @@ CNMF_RUN_NAME=$(curl -sf -H "Metadata-Flavor: Google" \
     http://metadata.google.internal/computeMetadata/v1/instance/attributes/CNMF_RUN_NAME 2>/dev/null || echo "nmf_arh_me_vmh")
 
 N_WORKERS=28  # n2-highmem-32 has 32 vCPUs; leave 4 for OS
-K_VALUES="50"
+K_VALUES="10 20 30 40 50"
 N_ITER=100
-SELECTED_K=50
 
 if [ "$TRIAL_RUN" = "true" ]; then
     echo "*** TRIAL RUN MODE ***"
@@ -203,13 +202,16 @@ else
     heartbeat "cNMF combine complete"
 
     echo ""
-    echo "=== cNMF consensus (K=$SELECTED_K) ==="
+    echo "=== cNMF consensus (all K values) ==="
     echo "Time: $(date -u)"
-    uv run python scripts/run_cnmf.py \
-        --step consensus \
-        --selected-k $SELECTED_K \
-        --run-name "$CNMF_RUN_NAME"
-    heartbeat "cNMF consensus complete"
+    for K in $K_VALUES; do
+        echo "  Running consensus for K=$K..."
+        uv run python scripts/run_cnmf.py \
+            --step consensus \
+            --selected-k "$K" \
+            --run-name "$CNMF_RUN_NAME"
+        heartbeat "cNMF consensus K=$K complete"
+    done
 fi
 
 # --- 8. Upload results to GCS ---

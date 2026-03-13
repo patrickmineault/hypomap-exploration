@@ -6,11 +6,13 @@
 # results to GCS.
 #
 # Usage:
-#   bash scripts/launch_cnmf_merfish_vm.sh                         # full run (ARH+ME+VMH bbox, all cells)
+#   bash scripts/launch_cnmf_merfish_vm.sh                         # full run (ARH+ME+VMH bbox, K sweep)
 #   bash scripts/launch_cnmf_merfish_vm.sh --trial-run              # quick test
 #   bash scripts/launch_cnmf_merfish_vm.sh --neurons-only           # neurons only
 #   bash scripts/launch_cnmf_merfish_vm.sh --bbox "-0.1 0.8 1.2 2.05 -2.5 -1.55"  # custom bbox
 #   bash scripts/launch_cnmf_merfish_vm.sh --run-name my_run        # custom run name
+#
+# By default runs K=10,20,30,40,50 and extracts consensus for each K.
 
 set -euo pipefail
 
