@@ -13,7 +13,7 @@
 
 import marimo
 
-__generated_with = "0.19.11"
+__generated_with = "0.19.4"
 app = marimo.App(width="medium")
 
 
@@ -31,14 +31,13 @@ def _():
     import pandas as pd
 
     matplotlib.rcParams["figure.dpi"] = 150
-
     return Path, json, math, mo, mpatches, np, pd, plt
 
 
 @app.cell
 def _(Path, json, np, pd):
     # Load cell data
-    _data_dir = Path("../data/processed/mouse_abc_subcortical")
+    _data_dir = Path("../data/processed/mouse_abc_extended")
     cells_df = pd.read_parquet(_data_dir / "cells_with_coords.parquet")
 
     # Filter unassigned regions
@@ -201,7 +200,6 @@ def _(math, mpatches, plt):
         fig.suptitle(title, fontsize=12)
         fig.tight_layout(rect=[0, 0, 1.0, 0.96])
         return plt.gca()
-
     return (make_bbox_figure,)
 
 
@@ -218,6 +216,24 @@ def _(mo):
     mo.md(r"""
     ## HY microcircuit
     """)
+    return
+
+
+@app.cell
+def _(plot_regions):
+    plot_regions(["ARH", "ME"])
+    return
+
+
+@app.cell
+def _(plot_bbox):
+    plot_bbox(xlim=(-0.1, 0.5), zlim=(-2.5, -1.59), ylim=(1.3, 2.0), title="One-sided ARH + ME + some VMH")
+    return
+
+
+@app.cell
+def _(plot_bbox):
+    plot_bbox(xlim=(-0.1, 0.8), zlim=(-2.5, -1.59), ylim=(1.2, 2.05), title="ARH + ME + VMHv (including VMHvl)")
     return
 
 
@@ -254,8 +270,48 @@ def _(boundaries, cells_df, centroids, make_bbox_figure, mo):
                 )
                 return mo.vstack([_md, _region_fig])
 
+    def plot_bbox(xlim, ylim, zlim=None, title=None):
+        """Plot a bounding box defined by coordinate limits.
+
+        Args:
+            xlim: (x_min, x_max) in mm
+            ylim: (y_min, y_max) in mm
+            zlim: (z_min, z_max) in mm, optional. If None, uses all slices within the box.
+        """
+        _x0, _x1 = xlim
+        _y0, _y1 = ylim
+        if zlim is not None:
+            _sel_slices = sorted(
+                z for z in cells_df["z_slice"].unique() if zlim[0] <= z <= zlim[1]
+            )
+        else:
+            _sel_slices = sorted(cells_df["z_slice"].unique())
+        if not _sel_slices:
+            return mo.md("No slices found in the specified z range.")
+        _md = mo.md(
+            f"""
+    ### Custom bounding box
+    | Property | Value |
+    |----------|-------|
+    | **X range** | {_x0:.2f} – {_x1:.2f} mm |
+    | **Y range** | {_y0:.2f} – {_y1:.2f} mm |
+    | **Z slices** | {len(_sel_slices)} ({_sel_slices[0]:.2f} – {_sel_slices[-1]:.2f}) |
+    | **Box size** | {_x1 - _x0:.2f} x {_y1 - _y0:.2f} x {(_sel_slices[-1] - _sel_slices[0] + 0.2):.2f} mm |
+    | **Volume** | {(_x1 - _x0) * (_y1 - _y0) * (_sel_slices[-1] - _sel_slices[0] + 0.2):.3f} mm³ |
+    """
+        )
+        _fig = make_bbox_figure(
+            _sel_slices,
+            (_x0, _x1),
+            (_y0, _y1),
+            boundaries,
+            centroids,
+            f"Bounding box: x=[{_x0:.2f}, {_x1:.2f}], y=[{_y0:.2f}, {_y1:.2f}]" if title is None else title,
+        )
+        return mo.vstack([_md, _fig])
+
     plot_regions(["ARH", "ME", "RCH"])
-    return (plot_regions,)
+    return plot_bbox, plot_regions
 
 
 @app.cell
@@ -293,6 +349,12 @@ def _():
 @app.cell
 def _(plot_regions):
     plot_regions(["ARH", "ME", "PVH", "DMH", "VMH", "AHN", "RCH", "ZI", "BST", "VP"])
+    return
+
+
+@app.cell
+def _(plot_regions):
+    plot_regions(["ARH", "ME", "MPO"])
     return
 
 

@@ -23,6 +23,10 @@ ALPHA = 6.0
 # Laterality threshold (fraction of cells needed on each side to split L/R)
 LATERALITY_THRESHOLD = 0.01
 
+# Midline structures that should never be split into L/R
+# These are unpaired structures that span the midline as a single unit
+MIDLINE_REGIONS = {"ME"}
+
 
 def main(input_path=None, output_path=None, region_col='region'):
     if input_path is None:
@@ -59,6 +63,10 @@ def main(input_path=None, output_path=None, region_col='region'):
             region_cells = df.loc[region_mask]
 
             if len(region_cells) < 5:
+                continue
+
+            # Skip midline structures — they are single unpaired regions
+            if region in MIDLINE_REGIONS:
                 continue
 
             # Check if region spans both sides of midline
