@@ -36,6 +36,55 @@ rule all:
         "app/data/processed/mouse_langlieb/cells_with_coords.parquet",
 
 # =============================================================================
+# Neuropeptide Map Pipeline (Lewis Lab → np_map.csv)
+# =============================================================================
+
+LEWISLAB_FILES = [
+    "Mouse-2023-Zhao-LR-pairs.tsv",
+    "Mouse-2022-Dimitrov-LR-pairs.csv",
+    "Mouse-2020-Jin-LR-pairs.csv",
+    "Mouse-2020-Shao-LR-pairs.txt",
+    "Mouse-2020-Baccin-LR-pairs.xlsx",
+    "Mouse-2020-Cain-LR-pairs.xlsx",
+    "Mouse-2019-Sheikh-LR-pairs.xlsx",
+    "Mouse-2018-Skelly-LR-pairs.xlsx",
+    "Mouse-2016-Yuzwa-LR-pairs.xlsx",
+    "Mouse-2016-Ding-LR-pairs.xlsx",
+]
+
+rule download_lewislab:
+    """Download Lewis Lab ligand-receptor pair databases."""
+    output:
+        expand("data/raw/lewislab/{f}", f=LEWISLAB_FILES)
+    shell:
+        "bash scripts/download_lewislab_np.sh"
+
+rule build_np_db:
+    """Build np_map_lewislab.csv from Lewis Lab databases and validate curated files."""
+    input:
+        lewislab=expand("data/raw/lewislab/{f}", f=LEWISLAB_FILES),
+        extra_pairs="data/generated/mouse_common/extra_pairs.csv",
+        extra_info="data/generated/mouse_common/extra_info.csv",
+        processing_enzymes="data/generated/mouse_common/processing_enzymes.csv",
+    output:
+        "data/processed/mouse_common/np_map_lewislab.csv"
+    shell:
+        "python scripts/build_np_db.py"
+
+rule join_np_db:
+    """Join Lewis Lab pairs with curated annotations to produce final np_map.csv files."""
+    input:
+        lewislab_csv="data/processed/mouse_common/np_map_lewislab.csv",
+        extra_pairs="data/generated/mouse_common/extra_pairs.csv",
+        extra_info="data/generated/mouse_common/extra_info.csv",
+        processing_enzymes="data/generated/mouse_common/processing_enzymes.csv",
+    output:
+        primary="data/processed/mouse_common/np_map.csv",
+        all="data/processed/mouse_common/np_map_all.csv",
+    shell:
+        "python scripts/join_np_db.py"
+
+# =============================================================================
 # Mouse ABC (Allen Brain Cell Census) Pipeline
 # =============================================================================
 
@@ -60,8 +109,9 @@ rule build_cluster_ligand_receptor_map:
     """Map neuropeptide and hormone ligand/receptor expression to ABC clusters."""
     input:
         metadata="data/processed/mouse_abc/cell_metadata.parquet",
-        np_map="data/generated/mouse_common/np_map.csv",
-        hormone_map="data/generated/mouse_common/hormone_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv",
+        hormone_map="data/generated/mouse_common/hormone_map.csv",
+        abc_functional="data/raw/mouse_abc/abc_functional_genes.csv"
     output:
         expression="data/processed/mouse_abc/neuropeptide_expression.parquet",
         profiles="data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet"
@@ -81,7 +131,7 @@ rule build_cluster_np_expression:
     """Precompute cluster-system expression lookup for fast NP mode."""
     input:
         profiles="data/processed/mouse_abc/cluster_ligand_receptor_profile.parquet",
-        np_map="data/generated/mouse_common/np_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv"
     output:
         "data/processed/mouse_abc/cluster_np_expression.parquet"
     shell:
@@ -127,7 +177,7 @@ rule build_lateralized_regions_langlieb:
 rule build_cluster_ligand_receptor_map_langlieb:
     """Build cluster ligand/receptor expression profiles from Langlieb snRNA-seq summaries."""
     input:
-        np_map="data/generated/mouse_common/np_map.csv",
+        np_map="data/processed/mouse_common/np_map.csv",
         hormone_map="data/generated/mouse_common/hormone_map.csv",
         avg_expr="data/raw/mouse_langlieb/singlenuclei_data/Single_Nuc_Cluster_Avg_Expression.csv.gz",
         nz_counts="data/raw/mouse_langlieb/singlenuclei_data/Single_Nuc_Cluster_NonZero_Counts.csv.gz",
@@ -142,7 +192,7 @@ rule build_cluster_np_expression_langlieb:
     """Precompute cluster-system expression lookup for Langlieb NP mode."""
     input:
         profiles="data/processed/mouse_langlieb/cluster_ligand_receptor_profile.parquet",
-        np_map="data/generated/mouse_common/np_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv"
     output:
         "data/processed/mouse_langlieb/cluster_np_expression.parquet"
     shell:
@@ -182,8 +232,9 @@ rule build_cluster_ligand_receptor_map_whole_brain:
     """Map neuropeptide and hormone ligand/receptor expression for whole-brain clusters."""
     input:
         metadata="data/processed/mouse_abc_whole_brain/cell_metadata.parquet",
-        np_map="data/generated/mouse_common/np_map.csv",
-        hormone_map="data/generated/mouse_common/hormone_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv",
+        hormone_map="data/generated/mouse_common/hormone_map.csv",
+        abc_functional="data/raw/mouse_abc/abc_functional_genes.csv"
     output:
         expression="data/processed/mouse_abc_whole_brain/neuropeptide_expression.parquet",
         profiles="data/processed/mouse_abc_whole_brain/cluster_ligand_receptor_profile.parquet"
@@ -194,7 +245,7 @@ rule build_cluster_np_expression_whole_brain:
     """Precompute cluster-system expression lookup for whole-brain NP mode."""
     input:
         profiles="data/processed/mouse_abc_whole_brain/cluster_ligand_receptor_profile.parquet",
-        np_map="data/generated/mouse_common/np_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv"
     output:
         "data/processed/mouse_abc_whole_brain/cluster_np_expression.parquet"
     shell:
@@ -234,8 +285,9 @@ rule build_cluster_ligand_receptor_map_extended:
     """Map neuropeptide and hormone ligand/receptor expression for extended clusters."""
     input:
         metadata="data/processed/mouse_abc_extended/cell_metadata.parquet",
-        np_map="data/generated/mouse_common/np_map.csv",
-        hormone_map="data/generated/mouse_common/hormone_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv",
+        hormone_map="data/generated/mouse_common/hormone_map.csv",
+        abc_functional="data/raw/mouse_abc/abc_functional_genes.csv"
     output:
         expression="data/processed/mouse_abc_extended/neuropeptide_expression.parquet",
         profiles="data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet"
@@ -246,7 +298,7 @@ rule build_cluster_np_expression_extended:
     """Precompute cluster-system expression lookup for extended NP mode."""
     input:
         profiles="data/processed/mouse_abc_extended/cluster_ligand_receptor_profile.parquet",
-        np_map="data/generated/mouse_common/np_map.csv"
+        np_map="data/processed/mouse_common/np_map.csv"
     output:
         "data/processed/mouse_abc_extended/cluster_np_expression.parquet"
     shell:
@@ -275,7 +327,7 @@ rule sync_app_data:
         lang_regions="data/processed/mouse_langlieb/coronal_atlas_regions.msgpack",
         lang_lr_profile="data/processed/mouse_langlieb/cluster_ligand_receptor_profile.parquet",
         lang_np_expr="data/processed/mouse_langlieb/cluster_np_expression.parquet",
-        np_map="data/generated/mouse_common/np_map.csv",
+        np_map="data/processed/mouse_common/np_map.csv",
         np_blacklist="data/generated/mouse_common/np_system_blacklist.csv",
         hormone_map="data/generated/mouse_common/hormone_map.csv",
         annotations="data/raw/mouse_abc/abc_cluster_annotations.csv/cluster_annotation-Table 1.csv",
@@ -297,7 +349,7 @@ rule sync_app_data:
         lang_regions="app/data/processed/mouse_langlieb/coronal_atlas_regions.msgpack",
         lang_lr_profile="app/data/processed/mouse_langlieb/cluster_ligand_receptor_profile.parquet",
         lang_np_expr="app/data/processed/mouse_langlieb/cluster_np_expression.parquet",
-        np_map="app/data/generated/mouse_common/np_map.csv",
+        np_map="app/data/processed/mouse_common/np_map.csv",
         np_blacklist="app/data/generated/mouse_common/np_system_blacklist.csv",
         hormone_map="app/data/generated/mouse_common/hormone_map.csv",
         annotations="app/data/raw/mouse_abc/abc_cluster_annotations.csv/cluster_annotation-Table 1.csv",
