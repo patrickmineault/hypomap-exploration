@@ -13,7 +13,7 @@ DST = REPO_ROOT / "app" / "data"
 
 # Shared files
 SHARED_FILES = [
-    "generated/mouse_common/np_map.csv",
+    "processed/mouse_common/np_map.csv",
     "generated/mouse_common/np_system_blacklist.csv",
     "generated/mouse_common/region_descriptions.csv",
     "generated/mouse_common/hormone_map.csv",
