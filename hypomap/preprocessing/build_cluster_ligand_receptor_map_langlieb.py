@@ -23,7 +23,7 @@ import pandas as pd
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 SNRNASEQ_DIR = DATA_DIR / "raw" / "mouse_langlieb" / "singlenuclei_data"
 OUTPUT_DIR = DATA_DIR / "processed" / "mouse_langlieb"
-NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
+NP_MAP_PATH = DATA_DIR / "processed" / "mouse_common" / "np_map.csv"
 HORMONE_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "hormone_map.csv"
 ABC_PROFILE_PATH = DATA_DIR / "processed" / "mouse_abc" / "cluster_ligand_receptor_profile.parquet"
 

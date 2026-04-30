@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
-NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
+NP_MAP_PATH = DATA_DIR / "processed" / "mouse_common" / "np_map.csv"
 DEFAULT_METADATA_DIR = DATA_DIR / "processed" / "mouse_abc"
 
 

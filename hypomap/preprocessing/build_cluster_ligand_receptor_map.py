@@ -21,8 +21,9 @@ import pandas as pd
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 CACHE_DIR = DATA_DIR / "raw" / "abc_atlas_cache"
 OUTPUT_DIR = DATA_DIR / "processed" / "mouse_abc"
-NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
+NP_MAP_PATH = DATA_DIR / "processed" / "mouse_common" / "np_map.csv"
 HORMONE_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "hormone_map.csv"
+ABC_FUNCTIONAL_GENES_PATH = DATA_DIR / "raw" / "mouse_abc" / "abc_functional_genes.csv"
 
 # Imputed data paths (external drive for large files)
 IMPUTED_CACHE_DIR = Path("/Volumes/ExtDrive/mouse_abc_data")
@@ -77,6 +78,32 @@ def get_ligand_receptor_genes() -> tuple[list[str], set[str], set[str]]:
                 print(f"    {hclass}: {n} interactions")
     else:
         print(f"  Warning: hormone_map.csv not found at {HORMONE_MAP_PATH}")
+
+    # Load ABC functional gene list (NP precursors, extra secreted, GPCRs)
+    # Source: Allen Brain Cell Atlas curated functional gene categories
+    if ABC_FUNCTIONAL_GENES_PATH.exists():
+        func_lines = ABC_FUNCTIONAL_GENES_PATH.read_text().splitlines()
+        func_genes = [l.split(",")[0] for l in func_lines if l.strip() and l.split(",")[0]]
+
+        # Parse sections by known boundary genes
+        np_rec_start = func_genes.index("Adcyap1r1")
+        nt_gpcr_start = func_genes.index("Adora1")
+        other_gpcr_start = func_genes.index("Ackr1")
+        np_prec_start = func_genes.index("Adcyap1")
+        extra_start = func_genes.index("Retn")
+
+        abc_ligands = set(func_genes[np_prec_start:extra_start]) | set(func_genes[extra_start:])
+        abc_receptors = set(func_genes[np_rec_start:np_prec_start])
+
+        new_ligands = abc_ligands - ligand_genes - receptor_genes
+        new_receptors = abc_receptors - ligand_genes - receptor_genes
+        ligand_genes |= new_ligands
+        receptor_genes |= new_receptors
+
+        print(f"  Loaded ABC functional genes from abc_functional_genes.csv")
+        print(f"    New ligands: {len(new_ligands)}, New receptors: {len(new_receptors)}")
+    else:
+        print(f"  Warning: abc_functional_genes.csv not found at {ABC_FUNCTIONAL_GENES_PATH}")
 
     all_genes = sorted(ligand_genes | receptor_genes)
 
