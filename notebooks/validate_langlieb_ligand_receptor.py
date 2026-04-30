@@ -48,7 +48,7 @@ def _(pd):
     abc_np_expr = pd.read_parquet(
         "../data/processed/mouse_abc/cluster_np_expression.parquet"
     )
-    np_map = pd.read_csv("../data/generated/mouse_common/np_map.csv")
+    np_map = pd.read_csv("../data/processed/mouse_common/np_map.csv")
 
     print(f"Langlieb profile: {lang_profile.shape[0]:,} cluster-gene pairs, {lang_profile['cluster'].nunique()} clusters")
     print(f"ABC profile: {abc_profile.shape[0]:,} cluster-gene pairs, {abc_profile['cluster'].nunique()} clusters")

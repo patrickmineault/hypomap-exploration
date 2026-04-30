@@ -102,7 +102,7 @@ def _(mo, msgpack, np, pd):
 
     # Load neuropeptide-receptor pair map
     np_map = pd.read_csv(
-        mo.notebook_dir() / ".." / "data" / "generated" / "mouse_common" / "np_map.csv"
+        mo.notebook_dir() / ".." / "data" / "processed" / "mouse_common" / "np_map.csv"
     )
 
     # Load region boundaries (compact msgpack with float32 binary arrays)

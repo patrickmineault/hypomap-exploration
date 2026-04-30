@@ -63,7 +63,7 @@ def _(GENERATED, PROCESSED_ABC, PROCESSED_COMMON, pd):
     wired_df = pd.read_csv(PROCESSED_COMMON / 'hypothalamus_connectivity.csv')
     cluster_profiles = pd.read_parquet(PROCESSED_ABC / 'cluster_ligand_receptor_profile.parquet')
     cell_metadata = pd.read_parquet(PROCESSED_ABC / 'cell_metadata.parquet')
-    np_map = pd.read_csv(GENERATED / 'np_map.csv')
+    np_map = pd.read_csv(PROCESSED_COMMON / 'np_map.csv')
 
     # Load injection site metadata for experiments
     exp_metadata = pd.read_csv(PROCESSED_COMMON / 'connectivity_experiment_metadata.csv')

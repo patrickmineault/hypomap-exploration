@@ -48,7 +48,7 @@ def _():
     expected_df = pd.read_csv('../data/generated/mouse_common/hypothalamic_nuclei_genes.csv')
 
     # Load ligand-receptor list to know what's tracked
-    np_map = pd.read_csv('../data/generated/mouse_common/np_map.csv')
+    np_map = pd.read_csv('../data/processed/mouse_common/np_map.csv')
     tracked_genes = set(np_map['Ligand_Gene'].unique()) | set(np_map['Receptor_Gene'].unique())
 
     # Available genes in expression data
@@ -96,7 +96,7 @@ def _(mo):
 @app.cell
 def _(available_genes, get_region_ranks, pd):
     # Load np_map.csv and validate LIGANDS
-    np_map_df = pd.read_csv('../data/generated/mouse_common/np_map.csv')
+    np_map_df = pd.read_csv('../data/processed/mouse_common/np_map.csv')
 
     # Extract unique (gene, region) pairs from Hypothalamic_Nuclei column for LIGANDS
     np_map_ligand_results = []

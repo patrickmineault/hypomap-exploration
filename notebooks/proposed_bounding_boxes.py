@@ -232,8 +232,9 @@ def _(plot_bbox):
 
 
 @app.cell
-def _(plot_bbox):
-    plot_bbox(xlim=(-0.1, 0.8), zlim=(-2.5, -1.59), ylim=(1.2, 2.05), title="ARH + ME + VMHv (including VMHvl)")
+def _(plot_bbox, plt):
+    fig = plot_bbox(xlim=(-0.1, 0.8), zlim=(-2.5, -1.59), ylim=(1.2, 2.05), title="ARH + ME + VMHv (including VMHvl)")
+    plt.savefig("proposed_volume.png")
     return
 
 
@@ -250,7 +251,6 @@ def _(boundaries, cells_df, centroids, make_bbox_figure, mo):
                 _sel_slices = sorted(_sel_df["z_slice"].unique())
                 _md = mo.md(
                     f"""
-        ### {len(_selected)} region(s) selected: {', '.join(_selected)}
         | Property | Value |
         |----------|-------|
         | **X range** | {_x0:.2f} – {_x1:.2f} mm |
@@ -290,7 +290,6 @@ def _(boundaries, cells_df, centroids, make_bbox_figure, mo):
             return mo.md("No slices found in the specified z range.")
         _md = mo.md(
             f"""
-    ### Custom bounding box
     | Property | Value |
     |----------|-------|
     | **X range** | {_x0:.2f} – {_x1:.2f} mm |
@@ -308,7 +307,7 @@ def _(boundaries, cells_df, centroids, make_bbox_figure, mo):
             centroids,
             f"Bounding box: x=[{_x0:.2f}, {_x1:.2f}], y=[{_y0:.2f}, {_y1:.2f}]" if title is None else title,
         )
-        return mo.vstack([_md, _fig])
+        return _fig
 
     plot_regions(["ARH", "ME", "RCH"])
     return plot_bbox, plot_regions

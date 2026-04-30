@@ -836,7 +836,7 @@ def _(go, indices_computed, np, sdi_df):
 
             fig_spatial.update_layout(
                 title=f'Spatial Distribution of {_idx}',
-                xaxis_title='X (mm)', yaxis_title='Y (mm)',
+                xaxis_title='x_ras (mm)', yaxis_title='z_ras (mm)',
                 height=600, width=800,
                 yaxis=dict(scaleanchor='x'),
             )
