@@ -30,12 +30,45 @@ CLUSTER_ANNOTATIONS_PATH = (
     / "abc_cluster_annotations.csv"
     / "cluster_annotation-Table 1.csv"
 )
-NP_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "np_map.csv"
+NP_MAP_PATH = DATA_DIR / "processed" / "mouse_common" / "np_map.csv"
 NP_BLACKLIST_PATH = DATA_DIR / "generated" / "mouse_common" / "np_system_blacklist.csv"
 REGION_DESCRIPTIONS_PATH = (
     DATA_DIR / "generated" / "mouse_common" / "region_descriptions.csv"
 )
 HORMONE_MAP_PATH = DATA_DIR / "generated" / "mouse_common" / "hormone_map.csv"
+
+# Neurotransmitter receptor systems — GPCR-type receptors available in the MERFISH panel.
+# Ionotropic receptors (GABA-A, AMPA, NMDA, nAChR) are not in the measured panel.
+NT_RECEPTOR_SYSTEMS = {
+    "GABA-B": {
+        "receptors": {"Gabbr1", "Gabbr2"},
+        "description": "Metabotropic GABA receptors",
+    },
+    "Glutamate (mGluR)": {
+        "receptors": {"Grm1", "Grm3", "Grm4", "Grm5", "Grm8"},
+        "description": "Metabotropic glutamate receptors",
+    },
+    "Dopamine": {
+        "receptors": {"Drd1", "Drd3", "Drd5"},
+        "description": "Dopamine receptors",
+    },
+    "Serotonin": {
+        "receptors": {"Htr1a", "Htr1b", "Htr1d", "Htr1f", "Htr2a", "Htr2c", "Htr4", "Htr5b", "Htr7"},
+        "description": "Serotonin receptors",
+    },
+    "Acetylcholine (mAChR)": {
+        "receptors": {"Chrm1", "Chrm2", "Chrm3", "Chrm5"},
+        "description": "Muscarinic acetylcholine receptors",
+    },
+    "Histamine": {
+        "receptors": {"Hrh1", "Hrh2", "Hrh3"},
+        "description": "Histamine receptors",
+    },
+    "Adrenergic": {
+        "receptors": {"Adra1a", "Adra1b", "Adra2a", "Adra2b", "Adra2c", "Adrb1"},
+        "description": "Adrenergic receptors",
+    },
+}
 
 # Per-dataset paths
 DATASET_PATHS = {
@@ -546,6 +579,8 @@ def create_app():
     hormone_systems, hormone_names = (
         load_hormone_systems() if ENABLE_HORMONE_MODE else ({}, [])
     )
+    nt_receptor_systems = NT_RECEPTOR_SYSTEMS
+    nt_receptor_names = sorted(nt_receptor_systems.keys())
     region_descriptions = load_region_descriptions()
 
     # Load per-dataset data bundles
@@ -580,6 +615,8 @@ def create_app():
         "np_system_names": np_system_names,
         "hormone_systems": hormone_systems,
         "hormone_names": hormone_names,
+        "nt_receptor_systems": nt_receptor_systems,
+        "nt_receptor_names": nt_receptor_names,
         "gene_info": gene_info,
         "region_descriptions": region_descriptions,
     }
@@ -611,6 +648,7 @@ def create_app():
     print(f"  NT types: {len(nt_types)}")
     print(f"  NP systems: {len(np_system_names)}")
     print(f"  Hormone systems: {len(hormone_names)}")
+    print(f"  NT receptor systems: {len(nt_receptor_names)}")
     print(f"  Regions (default): {len(region_list)}")
 
     # Create Dash app
@@ -632,6 +670,7 @@ def create_app():
         nt_types=nt_types,
         np_system_names=np_system_names,
         hormone_names=hormone_names if ENABLE_HORMONE_MODE else None,
+        nt_receptor_names=nt_receptor_names,
         region_list=region_list if ENABLE_REGION_HIGHLIGHT else None,
         region_descriptions=region_descriptions if ENABLE_REGION_HIGHLIGHT else None,
         enable_region_highlight=ENABLE_REGION_HIGHLIGHT,

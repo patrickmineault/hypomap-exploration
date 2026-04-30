@@ -15,9 +15,10 @@ DATASET_LABELS = {
 }
 
 
-def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names=None, region_list=None, region_descriptions=None, enable_region_highlight=False, dataset_names=None, default_dataset='mouse_abc', default_subsample=30):
+def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names=None, nt_receptor_names=None, region_list=None, region_descriptions=None, enable_region_highlight=False, dataset_names=None, default_dataset='mouse_abc', default_subsample=30):
     """Create the left control panel."""
     hormone_names = hormone_names or []
+    nt_receptor_names = nt_receptor_names or []
     region_list = region_list or []
     region_descriptions = region_descriptions or {}
     dataset_names = dataset_names or ['mouse_abc']
@@ -59,7 +60,8 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names
                     id='viz-mode',
                     options=[
                         {'label': ' Neuropeptide System', 'value': 'np'},
-                        {'label': ' Neurotransmitter System', 'value': 'nt'},
+                        {'label': ' Neurotransmitter Source', 'value': 'nt'},
+                        {'label': ' NT Receptor', 'value': 'nt_receptor'},
                     ] + ([{'label': ' Hormone Receptor', 'value': 'hormone'}] if hormone_names else []) + [
                         {'label': ' Cluster Granularity', 'value': 'cluster'},
                     ],
@@ -115,6 +117,24 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names
                         clearable=False,
                         className="modern-dropdown",
                     ),
+                ],
+                className="mb-4",
+                style={'display': 'none'},
+            ),
+
+            # NT receptor mode controls
+            html.Div(
+                id='nt-receptor-controls',
+                children=[
+                    html.Label("NT Receptor System", className="control-label"),
+                    dcc.Dropdown(
+                        id='nt-receptor-system',
+                        options=[{'label': name, 'value': name} for name in nt_receptor_names],
+                        value=nt_receptor_names[0] if nt_receptor_names else None,
+                        clearable=False,
+                        className="modern-dropdown",
+                    ),
+                    html.Div(id='nt-receptor-info', className="mt-2", style={'fontSize': '0.8rem', 'color': '#666'}),
                 ],
                 className="mb-4",
                 style={'display': 'none'},
@@ -197,7 +217,7 @@ def create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names
                 style={'display': 'none'},
             ),
 
-            # Shared expression threshold slider (visible in NP and Hormone modes)
+            # Shared expression threshold slider (visible in NP, Hormone, and NT Receptor modes)
             html.Div(
                 id='expression-threshold-container',
                 children=[
@@ -410,7 +430,7 @@ def create_right_panel(enable_quantile_toggle=False):
     ], className="h-100 modern-card", style={'overflowY': 'auto'})
 
 
-def create_layout(cell_type_levels, nt_types, np_system_names, hormone_names=None, region_list=None, region_descriptions=None, enable_region_highlight=False, enable_quantile_toggle=False, dataset_names=None, default_dataset='mouse_abc', default_slices=None, default_subsample=30):
+def create_layout(cell_type_levels, nt_types, np_system_names, hormone_names=None, nt_receptor_names=None, region_list=None, region_descriptions=None, enable_region_highlight=False, enable_quantile_toggle=False, dataset_names=None, default_dataset='mouse_abc', default_slices=None, default_subsample=30):
     """Create the main application layout."""
     return dbc.Container([
         # Header
@@ -425,7 +445,7 @@ def create_layout(cell_type_levels, nt_types, np_system_names, hormone_names=Non
         dbc.Row([
             # Left panel - Controls
             dbc.Col(
-                create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names, region_list, region_descriptions, enable_region_highlight, dataset_names, default_dataset, default_subsample),
+                create_left_panel(cell_type_levels, nt_types, np_system_names, hormone_names, nt_receptor_names, region_list, region_descriptions, enable_region_highlight, dataset_names, default_dataset, default_subsample),
                 width=2,
                 className="pe-3",
             ),

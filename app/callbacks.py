@@ -46,6 +46,7 @@ def create_slice_figure(
     nt_system,
     np_system,
     hormone_system,
+    nt_receptor_system,
     threshold,
     display_options,
     point_size,
@@ -55,6 +56,7 @@ def create_slice_figure(
     nt_mapping,
     np_systems,
     hormone_systems,
+    nt_receptor_systems,
     cluster_expression,
     cluster_np_expression,
     region_boundaries,
@@ -252,6 +254,55 @@ def create_slice_figure(
             # Background first, foreground last
             keep_idx = np.concatenate([bg_idx, fg_idx])
             color_arr = np.where(receptor_mask, '#000000', '#D3D3D3')
+        else:
+            if subsample_pct < 100:
+                n_keep = max(1, int(n_cells * subsample_pct / 100))
+                keep_idx = np.random.RandomState(42).choice(n_cells, size=n_keep, replace=False)
+            else:
+                keep_idx = np.arange(n_cells)
+            color_arr = np.full(n_cells, '#D3D3D3')
+
+    elif mode == 'nt_receptor':
+        if nt_receptor_system and nt_receptor_system in nt_receptor_systems:
+            receptor_genes = nt_receptor_systems[nt_receptor_system]['receptors']
+
+            # Compute max receptor expression per cluster
+            unique_clusters = np.unique(raw_cluster)
+            cluster_receptor_expr = {}
+            for c in unique_clusters:
+                if c not in cluster_expression:
+                    cluster_receptor_expr[c] = 0.0
+                    continue
+                cluster_genes = cluster_expression[c]
+                max_expr = max(
+                    (cluster_genes[gene]['mean_expr']
+                     for gene in receptor_genes
+                     if gene in cluster_genes),
+                    default=0.0,
+                )
+                cluster_receptor_expr[c] = max_expr
+
+            # Color by expression intensity (blue scale)
+            cluster_colors = {}
+            for c, expr in cluster_receptor_expr.items():
+                if expr >= threshold:
+                    intensity = min(1.0, expr / 5)
+                    b = int(100 + 155 * intensity)
+                    cluster_colors[c] = f'rgb(50, 50, {b})'
+                else:
+                    cluster_colors[c] = '#D3D3D3'
+
+            color_arr = np.array([cluster_colors.get(c, '#D3D3D3') for c in raw_cluster])
+            fg_mask = np.array([cluster_receptor_expr.get(c, 0.0) >= threshold for c in raw_cluster])
+            fg_idx = np.where(fg_mask)[0]
+            bg_idx = np.where(~fg_mask)[0]
+
+            if subsample_pct < 100 and len(bg_idx) > 0:
+                n_bg = max(1, int(len(bg_idx) * subsample_pct / 100))
+                bg_idx = np.random.RandomState(42).choice(bg_idx, size=n_bg, replace=False)
+
+            # Background first, foreground last
+            keep_idx = np.concatenate([bg_idx, fg_idx])
         else:
             if subsample_pct < 100:
                 n_keep = max(1, int(n_cells * subsample_pct / 100))
@@ -798,6 +849,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
     nt_types = app_data['nt_types']
     np_systems = app_data['np_systems']
     hormone_systems = app_data['hormone_systems']
+    nt_receptor_systems = app_data['nt_receptor_systems']
     gene_info = app_data['gene_info']
     region_descriptions = app_data['region_descriptions']
 
@@ -813,6 +865,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             Output('nt-controls', 'style'),
             Output('np-controls', 'style'),
             Output('hormone-controls', 'style'),
+            Output('nt-receptor-controls', 'style'),
             Output('expression-threshold-container', 'style'),
         ],
         Input('viz-mode', 'value'),
@@ -823,8 +876,9 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
         nt_style = {'display': 'block'} if mode == 'nt' else {'display': 'none'}
         np_style = {'display': 'block'} if mode == 'np' else {'display': 'none'}
         hormone_style = {'display': 'block'} if mode == 'hormone' else {'display': 'none'}
-        threshold_style = {'display': 'block'} if mode in ['np', 'hormone'] else {'display': 'none'}
-        return cluster_style, nt_style, np_style, hormone_style, threshold_style
+        nt_receptor_style = {'display': 'block'} if mode == 'nt_receptor' else {'display': 'none'}
+        threshold_style = {'display': 'block'} if mode in ['np', 'hormone', 'nt_receptor'] else {'display': 'none'}
+        return cluster_style, nt_style, np_style, hormone_style, nt_receptor_style, threshold_style
 
     @app.callback(
         Output('diffusion-range-container', 'style'),
@@ -859,6 +913,24 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
             html.Div([html.Strong("Ligands: "), ', '.join(ligands)]) if ligands else None,
             html.Div([html.Strong("Receptors: "), ', '.join(receptors)]) if receptors else None,
             html.Div([html.Strong("Function: "), func_role], style={'fontStyle': 'italic'}) if func_role else None,
+        ]
+
+    @app.callback(
+        Output('nt-receptor-info', 'children'),
+        Input('nt-receptor-system', 'value'),
+    )
+    def update_nt_receptor_info(system):
+        """Display info about selected NT receptor system."""
+        if not system or system not in nt_receptor_systems:
+            return None
+
+        system_data = nt_receptor_systems[system]
+        receptors = sorted(system_data['receptors'])
+        description = system_data.get('description', '')
+
+        return [
+            html.Div([html.Strong("Receptors: "), ', '.join(receptors)]),
+            html.Div(description, style={'fontStyle': 'italic'}) if description else None,
         ]
 
     # Region highlight: Click to select region
@@ -970,6 +1042,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
         Input('nt-system', 'value'),
         Input('np-system', 'value'),
         Input('hormone-system', 'value'),
+        Input('nt-receptor-system', 'value'),
         Input('expression-threshold', 'value'),
         Input('display-options', 'value'),
         Input('point-size', 'value'),
@@ -990,7 +1063,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
              Output('slice-grid', 'style')],
             slice_inputs,
         )
-        def update_slices_with_highlight(mode, cluster_level, nt_system, np_system, hormone_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range, rainbow_enabled, dataset_name, grid_columns, z_range, selected_region):
+        def update_slices_with_highlight(mode, cluster_level, nt_system, np_system, hormone_system, nt_receptor_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range, rainbow_enabled, dataset_name, grid_columns, z_range, selected_region):
             """Update the slice grid visualization with region highlighting."""
             ds = get_dataset(dataset_name)
             n_cols = grid_columns or 2
@@ -1017,6 +1090,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 nt_system=nt_system,
                 np_system=np_system,
                 hormone_system=hormone_system,
+                nt_receptor_system=nt_receptor_system,
                 threshold=threshold,
                 display_options=display_options or [],
                 point_size=point_size,
@@ -1026,6 +1100,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 nt_mapping=ds_nt_mapping,
                 np_systems=np_systems,
                 hormone_systems=hormone_systems,
+                nt_receptor_systems=nt_receptor_systems,
                 cluster_expression=ds['cluster_expression'],
                 cluster_np_expression=ds['cluster_np_expression'],
                 region_boundaries=ds['region_boundaries'],
@@ -1044,7 +1119,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
              Output('slice-grid', 'style')],
             slice_inputs,
         )
-        def update_slices(mode, cluster_level, nt_system, np_system, hormone_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range, rainbow_enabled, dataset_name, grid_columns, z_range):
+        def update_slices(mode, cluster_level, nt_system, np_system, hormone_system, nt_receptor_system, threshold, display_options, point_size, subsample_pct, diffusion_enabled, diffusion_range, rainbow_enabled, dataset_name, grid_columns, z_range):
             """Update the slice grid visualization."""
             ds = get_dataset(dataset_name)
             n_cols = grid_columns or 2
@@ -1071,6 +1146,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 nt_system=nt_system,
                 np_system=np_system,
                 hormone_system=hormone_system,
+                nt_receptor_system=nt_receptor_system,
                 threshold=threshold,
                 display_options=display_options or [],
                 point_size=point_size,
@@ -1080,6 +1156,7 @@ def register_callbacks(app, app_data, enable_region_highlight=False, enable_quan
                 nt_mapping=ds_nt_mapping,
                 np_systems=np_systems,
                 hormone_systems=hormone_systems,
+                nt_receptor_systems=nt_receptor_systems,
                 cluster_expression=ds['cluster_expression'],
                 cluster_np_expression=ds['cluster_np_expression'],
                 region_boundaries=ds['region_boundaries'],
